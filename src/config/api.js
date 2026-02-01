@@ -10,6 +10,16 @@ export const API_URL = import.meta.env.VITE_API_URL ||
                        import.meta.env.VITE_API_BASE_URL || 
                        'http://localhost:10000';
 
+// Log para debug
+if (typeof window !== 'undefined') {
+  console.log('🔍 API Config:', {
+    VITE_API_URL: import.meta.env.VITE_API_URL,
+    VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
+    API_URL_FINAL: API_URL,
+    willUseBackend: API_URL && !API_URL.includes('localhost')
+  });
+}
+
 /**
  * Cliente HTTP para chamadas à API
  */

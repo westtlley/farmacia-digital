@@ -31,12 +31,23 @@ class EntityAPI {
 
   async list(sortBy = '', limit = null) {
     // Tentar usar backend se disponível
-    if (this.entityName === 'Product' && API_URL && API_URL !== 'http://localhost:10000') {
-      try {
-        const products = await apiClient.get('/api/products');
-        return Array.isArray(products) ? products : [];
-      } catch (error) {
-        console.warn('⚠️ Backend não disponível, usando localStorage:', error.message);
+    if (this.entityName === 'Product') {
+      const shouldUseBackend = API_URL && 
+        API_URL !== 'http://localhost:10000' && 
+        !API_URL.includes('localhost');
+      
+      if (shouldUseBackend) {
+        try {
+          console.log('🔍 Tentando buscar produtos do backend:', API_URL);
+          const products = await apiClient.get('/api/products');
+          console.log(`✅ ${products.length} produtos carregados do backend`);
+          return Array.isArray(products) ? products : [];
+        } catch (error) {
+          console.error('❌ Erro ao buscar do backend:', error);
+          console.warn('⚠️ Usando localStorage como fallback');
+        }
+      } else {
+        console.log('ℹ️ Usando localStorage (backend não configurado ou localhost)');
       }
     }
     await delay();
@@ -77,19 +88,31 @@ class EntityAPI {
 
   async create(data) {
     // Tentar usar backend se disponível
-    if (this.entityName === 'Product' && API_URL && API_URL !== 'http://localhost:10000') {
-      try {
-        const product = await apiClient.post('/api/products', data);
-        console.log('✅ Produto salvo no backend:', product.id);
-        return product;
-      } catch (error) {
-        console.error('❌ Erro ao salvar no backend:', error);
-        console.warn('⚠️ Usando localStorage como fallback');
+    if (this.entityName === 'Product') {
+      const shouldUseBackend = API_URL && 
+        API_URL !== 'http://localhost:10000' && 
+        !API_URL.includes('localhost');
+      
+      if (shouldUseBackend) {
+        try {
+          console.log('🔍 Tentando salvar produto no backend:', API_URL);
+          console.log('📦 Dados do produto:', { name: data.name, price: data.price });
+          const product = await apiClient.post('/api/products', data);
+          console.log('✅ Produto salvo no backend:', product.id, '-', product.name);
+          return product;
+        } catch (error) {
+          console.error('❌ Erro ao salvar no backend:', error);
+          console.error('❌ Detalhes:', error.message);
+          console.warn('⚠️ Usando localStorage como fallback');
+        }
+      } else {
+        console.log('ℹ️ Backend não configurado, usando localStorage');
+        console.log('ℹ️ API_URL:', API_URL);
       }
     }
     await delay();
     const result = db.create(this.entityName, data);
-    console.log('⚠️ Produto salvo apenas no localStorage (não persiste)');
+    console.log('⚠️ Produto salvo apenas no localStorage (não persiste entre sessões)');
     return result;
   }
 
