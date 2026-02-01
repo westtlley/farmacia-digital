@@ -196,62 +196,109 @@ class EntityAPI {
     console.log('🔍 ===== BULK CREATE PRODUTOS =====');
     console.log('Entity:', this.entityName);
     console.log('Quantidade:', items.length);
-    console.log('API_URL:', API_URL);
-    console.log('VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL || '❌ UNDEFINED');
+    
+    // Verificar variáveis de ambiente diretamente
+    const viteApiUrl = import.meta.env.VITE_API_URL;
+    const viteApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+    const finalApiUrl = API_URL;
+    
+    console.log('VITE_API_URL:', viteApiUrl || '❌ UNDEFINED');
+    console.log('VITE_API_BASE_URL:', viteApiBaseUrl || '❌ UNDEFINED');
+    console.log('API_URL FINAL:', finalApiUrl);
     
     // Tentar usar backend se disponível
     if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
+      const isLocalhost = finalApiUrl.includes('localhost') || finalApiUrl === 'http://localhost:10000';
+      const shouldUseBackend = finalApiUrl && !isLocalhost && finalApiUrl.startsWith('http');
       
       console.log('isLocalhost?', isLocalhost);
       console.log('shouldUseBackend?', shouldUseBackend);
       
       if (shouldUseBackend) {
-        console.log('🔍 Tentando salvar produtos no backend:', API_URL);
+        console.log('🔍 Tentando salvar produtos no backend:', finalApiUrl);
         const results = [];
         let successCount = 0;
         let errorCount = 0;
+        const errors = [];
         
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          try {
-            const product = await apiClient.post('/api/products', item);
-            results.push(product);
-            successCount++;
-            
-            // Log de progresso a cada 50 produtos
-            if ((i + 1) % 50 === 0) {
-              console.log(`📊 Progresso: ${i + 1}/${items.length} produtos processados`);
+        // Testar conexão primeiro
+        try {
+          const healthCheck = await fetch(`${finalApiUrl}/api/health`);
+          if (!healthCheck.ok) {
+            throw new Error(`Backend não está respondendo: ${healthCheck.status}`);
+          }
+          const health = await healthCheck.json();
+          console.log('✅ Backend online:', health.message);
+        } catch (error) {
+          console.error('❌ Backend offline ou inacessível:', error.message);
+          console.warn('⚠️ Usando localStorage como fallback');
+          // Continuar para fallback
+        }
+        
+        // Se health check passou, tentar salvar produtos
+        if (shouldUseBackend) {
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            try {
+              const response = await fetch(`${finalApiUrl}/api/products`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(item),
+              });
+              
+              if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+              }
+              
+              const product = await response.json();
+              results.push(product);
+              successCount++;
+              
+              // Log de progresso a cada 50 produtos
+              if ((i + 1) % 50 === 0) {
+                console.log(`📊 Progresso: ${i + 1}/${items.length} produtos processados (${successCount} sucesso, ${errorCount} erros)`);
+              }
+            } catch (error) {
+              errorCount++;
+              errors.push({ index: i + 1, name: item.name, error: error.message });
+              
+              // Mostrar apenas os primeiros 5 erros para não poluir o console
+              if (errorCount <= 5) {
+                console.error(`❌ Erro ao criar produto ${i + 1} (${item.name || 'sem nome'}):`, error.message);
+              }
+              // Continuar com os próximos produtos mesmo se um falhar
             }
-          } catch (error) {
-            errorCount++;
-            console.error(`❌ Erro ao criar produto ${i + 1} (${item.name}):`, error.message);
-            // Continuar com os próximos produtos mesmo se um falhar
+            
+            // Pequeno delay para não sobrecarregar o servidor
+            if ((i + 1) % 10 === 0) {
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
           }
           
-          // Pequeno delay para não sobrecarregar o servidor
-          if ((i + 1) % 10 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 50));
+          console.log(`✅ ${successCount} produtos salvos no backend`);
+          if (errorCount > 0) {
+            console.warn(`⚠️ ${errorCount} produtos falharam ao salvar no backend`);
+            if (errors.length > 0) {
+              console.warn('Primeiros erros:', errors.slice(0, 5));
+            }
           }
-        }
-        
-        console.log(`✅ ${successCount} produtos salvos no backend`);
-        if (errorCount > 0) {
-          console.warn(`⚠️ ${errorCount} produtos falharam ao salvar no backend`);
-        }
-        console.log('============================');
-        
-        // Se pelo menos alguns produtos foram salvos, retornar os resultados
-        if (results.length > 0) {
-          return results;
-        } else {
-          console.warn('⚠️ Nenhum produto foi salvo no backend, usando localStorage como fallback');
+          console.log('============================');
+          
+          // Se pelo menos alguns produtos foram salvos, retornar os resultados
+          if (results.length > 0) {
+            console.log(`✅ Retornando ${results.length} produtos salvos no backend`);
+            return results;
+          } else {
+            console.warn('⚠️ Nenhum produto foi salvo no backend, usando localStorage como fallback');
+          }
         }
       } else {
         console.log('ℹ️ Backend não configurado ou localhost');
-        console.log('ℹ️ API_URL atual:', API_URL);
-        console.log('ℹ️ Configure VITE_API_BASE_URL no Vercel!');
+        console.log('ℹ️ API_URL atual:', finalApiUrl);
+        console.log('ℹ️ Verifique se VITE_API_BASE_URL está configurada no Vercel e faça redeploy!');
       }
     }
     
@@ -260,6 +307,7 @@ class EntityAPI {
     await delay(300);
     const result = db.bulkCreate(this.entityName, items);
     console.log('⚠️ Produtos salvos apenas no localStorage (não persistem entre sessões)');
+    console.log('⚠️ IMPORTANTE: Configure VITE_API_BASE_URL no Vercel e faça redeploy!');
     console.log('============================');
     return result;
   }
