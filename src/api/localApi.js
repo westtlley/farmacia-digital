@@ -87,32 +87,42 @@ class EntityAPI {
   }
 
   async create(data) {
+    console.log('🔍 ===== CRIAR PRODUTO =====');
+    console.log('Entity:', this.entityName);
+    console.log('API_URL:', API_URL);
+    
     // Tentar usar backend se disponível
     if (this.entityName === 'Product') {
-      const shouldUseBackend = API_URL && 
-        API_URL !== 'http://localhost:10000' && 
-        !API_URL.includes('localhost');
+      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
+      const shouldUseBackend = API_URL && !isLocalhost;
+      
+      console.log('isLocalhost?', isLocalhost);
+      console.log('shouldUseBackend?', shouldUseBackend);
       
       if (shouldUseBackend) {
         try {
           console.log('🔍 Tentando salvar produto no backend:', API_URL);
-          console.log('📦 Dados do produto:', { name: data.name, price: data.price });
+          console.log('📦 Dados do produto:', { name: data.name, price: data.price, status: data.status });
           const product = await apiClient.post('/api/products', data);
           console.log('✅ Produto salvo no backend:', product.id, '-', product.name);
+          console.log('============================');
           return product;
         } catch (error) {
           console.error('❌ Erro ao salvar no backend:', error);
           console.error('❌ Detalhes:', error.message);
+          console.error('❌ Stack:', error.stack);
           console.warn('⚠️ Usando localStorage como fallback');
         }
       } else {
-        console.log('ℹ️ Backend não configurado, usando localStorage');
-        console.log('ℹ️ API_URL:', API_URL);
+        console.log('ℹ️ Backend não configurado ou localhost');
+        console.log('ℹ️ API_URL atual:', API_URL);
+        console.log('ℹ️ Configure VITE_API_BASE_URL no Vercel!');
       }
     }
     await delay();
     const result = db.create(this.entityName, data);
     console.log('⚠️ Produto salvo apenas no localStorage (não persiste entre sessões)');
+    console.log('============================');
     return result;
   }
 

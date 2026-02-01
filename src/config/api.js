@@ -10,14 +10,16 @@ export const API_URL = import.meta.env.VITE_API_URL ||
                        import.meta.env.VITE_API_BASE_URL || 
                        'http://localhost:10000';
 
-// Log para debug
+// Log para debug - FORÇAR APARECER
 if (typeof window !== 'undefined') {
-  console.log('🔍 API Config:', {
-    VITE_API_URL: import.meta.env.VITE_API_URL,
-    VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
-    API_URL_FINAL: API_URL,
-    willUseBackend: API_URL && !API_URL.includes('localhost')
-  });
+  setTimeout(() => {
+    console.log('🔍 ===== API CONFIG DEBUG =====');
+    console.log('VITE_API_URL:', import.meta.env.VITE_API_URL || '❌ UNDEFINED');
+    console.log('VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL || '❌ UNDEFINED');
+    console.log('API_URL FINAL:', API_URL);
+    console.log('Vai usar backend?', API_URL && !API_URL.includes('localhost') ? '✅ SIM' : '❌ NÃO');
+    console.log('================================');
+  }, 1000);
 }
 
 /**
