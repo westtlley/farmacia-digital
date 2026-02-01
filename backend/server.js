@@ -1,6 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -14,18 +20,73 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Arquivos de persistência
+const DATA_DIR = path.join(__dirname, 'data');
+const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
+const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
+
+// Criar diretório de dados se não existir
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Funções de persistência
+function loadProducts() {
+  try {
+    if (fs.existsSync(PRODUCTS_FILE)) {
+      const data = fs.readFileSync(PRODUCTS_FILE, 'utf8');
+      const products = JSON.parse(data);
+      console.log(`📦 Carregados ${products.length} produtos do arquivo`);
+      return products;
+    }
+  } catch (error) {
+    console.error('Erro ao carregar produtos:', error);
+  }
+  return [];
+}
+
+function saveProducts(products) {
+  try {
+    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2), 'utf8');
+    console.log(`💾 ${products.length} produtos salvos no arquivo`);
+  } catch (error) {
+    console.error('Erro ao salvar produtos:', error);
+  }
+}
+
+function loadCategories() {
+  try {
+    if (fs.existsSync(CATEGORIES_FILE)) {
+      const data = fs.readFileSync(CATEGORIES_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('Erro ao carregar categorias:', error);
+  }
+  return [];
+}
+
+function saveCategories(categories) {
+  try {
+    fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(categories, null, 2), 'utf8');
+  } catch (error) {
+    console.error('Erro ao salvar categorias:', error);
+  }
+}
+
+// Carregar dados ao iniciar
+let productsStore = loadProducts();
+let categoriesStore = loadCategories();
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     message: 'API funcionando',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    productsCount: productsStore.length
   });
 });
-
-// Armazenamento em memória (temporário - migrar para banco de dados depois)
-let productsStore = [];
-let categoriesStore = [];
 
 // Rotas de produtos
 app.get('/api/products', (req, res) => {
@@ -79,6 +140,7 @@ app.post('/api/products', (req, res) => {
       updated_date: new Date().toISOString()
     };
     productsStore.push(product);
+    saveProducts(productsStore); // Salvar no arquivo
     console.log(`✅ Produto criado: ${product.id} - ${product.name}`);
     res.status(201).json(product);
   } catch (error) {
@@ -100,6 +162,7 @@ app.put('/api/products/:id', (req, res) => {
       updated_date: new Date().toISOString()
     };
     productsStore[index] = updatedProduct;
+    saveProducts(productsStore); // Salvar no arquivo
     console.log(`✅ Produto atualizado: ${updatedProduct.id} - ${updatedProduct.name}`);
     res.json(updatedProduct);
   } catch (error) {
@@ -115,6 +178,7 @@ app.delete('/api/products/:id', (req, res) => {
       return res.status(404).json({ error: 'Produto não encontrado' });
     }
     productsStore.splice(index, 1);
+    saveProducts(productsStore); // Salvar no arquivo
     console.log(`✅ Produto deletado: ${req.params.id}`);
     res.json({ success: true });
   } catch (error) {
@@ -161,6 +225,20 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ success: true, user: req.body });
 });
 
+// Salvar dados periodicamente (a cada 30 segundos)
+setInterval(() => {
+  saveProducts(productsStore);
+  saveCategories(categoriesStore);
+}, 30000);
+
+// Salvar ao encerrar
+process.on('SIGTERM', () => {
+  console.log('💾 Salvando dados antes de encerrar...');
+  saveProducts(productsStore);
+  saveCategories(categoriesStore);
+  process.exit(0);
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
@@ -168,4 +246,5 @@ app.listen(PORT, () => {
   console.log(`🌐 URL pública: https://farmacia-digital-1.onrender.com`);
   console.log(`🔗 Frontend configurado: ${process.env.FRONTEND_URL || 'Nenhum (aceita todas as origens)'}`);
   console.log(`☁️ Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME || 'Não configurado'}`);
+  console.log(`💾 Persistência: Arquivo JSON (${productsStore.length} produtos carregados)`);
 });
