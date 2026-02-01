@@ -1,0 +1,38 @@
+═══════════════════════════════════════════════════════════════
+  COMANDOS PARA SUBIR O PROJETO PARA O GITHUB
+═══════════════════════════════════════════════════════════════
+
+1. Abra o PowerShell ou Terminal
+2. Navegue até a pasta do projeto:
+
+   cd "C:\Users\POSITIVO\Downloads\Farmácia Digital\Farmácia Digital"
+
+3. Execute os comandos abaixo (um por vez):
+
+   git init
+   git branch -M main
+   git add .
+   git commit -m "Initial commit: Farmácia Digital com configuração de deploy"
+   git remote add origin https://github.com/SEU-USUARIO/farmacia-digital.git
+   git push -u origin main
+
+   ⚠️  SUBSTITUA "SEU-USUARIO" pelo seu usuário do GitHub!
+
+4. Quando pedir autenticação:
+   - Usuário: seu usuário do GitHub
+   - Senha: use um Personal Access Token (não sua senha normal)
+
+   Como criar token:
+   - GitHub → Settings → Developer settings
+   - Personal access tokens → Tokens (classic)
+   - Generate new token (classic)
+   - Marque "repo" (todas as permissões)
+   - Generate e COPIE o token
+   - Use o token como senha
+
+═══════════════════════════════════════════════════════════════
+
+OU use o script automático:
+   .\subir-github.ps1
+
+═══════════════════════════════════════════════════════════════

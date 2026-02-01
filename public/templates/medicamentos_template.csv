@@ -1,0 +1,4 @@
+nome,principio_ativo,classe,indicacoes,contraindicacoes,efeitos,dosagens,generico_disponivel,requer_receita
+Dorflex,Dipirona + Orfenadrina + Cafeína,Analgésico e relaxante muscular,Dor muscular;Dor de cabeça tensional;Dor lombar,Miastenia gravis;Glaucoma;Obstrução intestinal,Sonolência;Boca seca;Tontura,35mg + 50mg + 300mg,false,false
+Tylenol,Paracetamol,Analgésico e antitérmico,Dor;Febre,Insuficiência hepática grave,Raras reações alérgicas,500mg;750mg,true,false
+Advil,Ibuprofeno,Anti-inflamatório não esteroidal,Dor;Febre;Inflamação,Úlcera péptica;Gravidez (3º trimestre),Desconforto gástrico;Náusea,200mg;400mg;600mg,true,false
