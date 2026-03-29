@@ -1,111 +1,106 @@
-/**
- * Configuração da API Backend
- * URL da API no Render
- */
+import { clearStoredSession, getStoredToken } from '@/api/session';
 
-// URL da API Backend (Render)
-// Em produção, será definida via variável de ambiente no Vercel
-// Suporta tanto VITE_API_URL quanto VITE_API_BASE_URL
-export const API_URL = import.meta.env.VITE_API_URL || 
-                       import.meta.env.VITE_API_BASE_URL || 
-                       'http://localhost:10000';
+export const API_URL =
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  'http://localhost:10000';
 
-// Log para debug - FORÇAR APARECER
-if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    console.log('🔍 ===== API CONFIG DEBUG =====');
-    console.log('VITE_API_URL:', import.meta.env.VITE_API_URL || '❌ UNDEFINED');
-    console.log('VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL || '❌ UNDEFINED');
-    console.log('API_URL FINAL:', API_URL);
-    console.log('Vai usar backend?', API_URL && !API_URL.includes('localhost') ? '✅ SIM' : '❌ NÃO');
-    console.log('================================');
-  }, 1000);
+async function request(method, endpoint, data, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  const token = getStoredToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    method,
+    headers,
+    body: data !== undefined ? JSON.stringify(data) : undefined,
+    credentials: 'include',
+    ...options,
+  });
+
+  if (response.status === 401) {
+    clearStoredSession();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    const message =
+      typeof payload === 'object' && payload?.error
+        ? payload.error
+        : `API Error: ${response.status} ${response.statusText}`;
+
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  return payload;
 }
 
-/**
- * Cliente HTTP para chamadas à API
- */
+async function requestBlob(endpoint, options = {}) {
+  const headers = {
+    ...options.headers,
+  };
+
+  const token = getStoredToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+    ...options,
+  });
+
+  if (response.status === 401) {
+    clearStoredSession();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
+  }
+
+  if (!response.ok) {
+    const payload = await response.text();
+    const error = new Error(payload || `API Error: ${response.status} ${response.statusText}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  return response.blob();
+}
+
 export const apiClient = {
-  /**
-   * GET request
-   */
-  async get(endpoint, options = {}) {
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-    
-    return response.json();
+  get(endpoint, options = {}) {
+    return request('GET', endpoint, undefined, options);
   },
-  
-  /**
-   * POST request
-   */
-  async post(endpoint, data, options = {}) {
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      body: JSON.stringify(data),
-      ...options,
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-    
-    return response.json();
+  post(endpoint, data, options = {}) {
+    return request('POST', endpoint, data, options);
   },
-  
-  /**
-   * PUT request
-   */
-  async put(endpoint, data, options = {}) {
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      body: JSON.stringify(data),
-      ...options,
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-    
-    return response.json();
+  put(endpoint, data, options = {}) {
+    return request('PUT', endpoint, data, options);
   },
-  
-  /**
-   * DELETE request
-   */
-  async delete(endpoint, options = {}) {
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
-    }
-    
-    return response.json();
+  delete(endpoint, options = {}) {
+    return request('DELETE', endpoint, undefined, options);
+  },
+  getBlob(endpoint, options = {}) {
+    return requestBlob(endpoint, options);
   },
 };
 

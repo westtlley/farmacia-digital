@@ -75,7 +75,9 @@ export default function AlertsWidget({ products = [], orders = [], prescriptions
   }
 
   // 4. RECEITAS PENDENTES
-  const pendingPrescriptions = prescriptions.filter(p => p.status === 'pending');
+  const pendingPrescriptions = prescriptions.filter(
+    p => p.review_status === 'pending' || p.status === 'uploaded' || p.status === 'pending_review'
+  );
 
   if (pendingPrescriptions.length > 0) {
     alerts.push({

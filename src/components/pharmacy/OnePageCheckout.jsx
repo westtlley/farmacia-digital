@@ -175,7 +175,7 @@ export default function OnePageCheckout({
 
     } catch (error) {
       console.error('Erro ao criar pedido:', error);
-      toast.error('Erro ao processar pedido. Tente novamente.');
+      toast.error(error.message || 'Erro ao processar pedido. Tente novamente.');
     } finally {
       setIsProcessing(false);
     }

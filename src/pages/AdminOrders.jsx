@@ -59,6 +59,7 @@ import { ptBR } from 'date-fns/locale';
 import { canChangeOrderStatus } from '@/utils/validation';
 import { formatWhatsAppNumber, createWhatsAppUrl } from '@/utils/whatsapp';
 import { formatStatusUpdate, sendWhatsAppMessage } from '@/utils/whatsappMessages';
+import { formatPhoneNumber } from '@/utils/phoneFormat';
 import OrderInvoice from '@/components/admin/OrderInvoice';
 
 const statusConfig = {

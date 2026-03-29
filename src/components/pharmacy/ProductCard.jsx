@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { formatPrice, formatPriceWithSymbol } from '@/utils/priceFormat';
 import { getProductImage } from '@/utils/productImages';
 import { ProductBadges, StockUrgencyBadge, SavingsBadge } from './ProductBadges';
+import { productRequiresPrescription } from '@/utils/prescriptionPolicy';
 
 export default function ProductCard({ product, onAddToCart, onAddToFavorites, isFavorite }) {
   const [imageError, setImageError] = useState(false);
@@ -96,7 +97,7 @@ export default function ProductCard({ product, onAddToCart, onAddToFavorites, is
                 Genérico
               </Badge>
             )}
-            {(product.requires_prescription || product.is_antibiotic || product.is_controlled) && (
+            {productRequiresPrescription(product) && (
               <Badge className="bg-blue-500 text-white text-xs flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" />
                 Receita obrigatória

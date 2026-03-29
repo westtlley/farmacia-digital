@@ -5,8 +5,6 @@
 
 const cloudinaryConfig = {
   cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || '',
-  apiKey: import.meta.env.VITE_CLOUDINARY_API_KEY || '',
-  apiSecret: import.meta.env.VITE_CLOUDINARY_API_SECRET || '',
 };
 
 /**
@@ -61,24 +59,13 @@ export const getCloudinaryUrl = (imagePath, options = {}) => {
  * @returns {Promise<object>} Resultado do upload
  */
 export const uploadToCloudinary = async (file, options = {}) => {
-  // Verificação detalhada das variáveis
-  console.log('🔍 Verificando configuração Cloudinary:', {
-    cloudName: cloudinaryConfig.cloudName || '❌ FALTA',
-    apiKey: cloudinaryConfig.apiKey ? '✅ Configurado' : '❌ FALTA',
-    uploadPreset: options.uploadPreset || '❌ FALTA',
-    fileName: file?.name,
-    fileSize: file?.size
-  });
-
   if (!cloudinaryConfig.cloudName) {
     const error = 'Cloudinary não configurado. VITE_CLOUDINARY_CLOUD_NAME está faltando.';
-    console.error('❌', error);
     throw new Error(error);
   }
 
   if (!options.uploadPreset) {
     const error = 'Upload Preset não fornecido. Configure VITE_CLOUDINARY_UPLOAD_PRESET ou passe uploadPreset nas opções.';
-    console.error('❌', error);
     throw new Error(error);
   }
 
@@ -94,12 +81,6 @@ export const uploadToCloudinary = async (file, options = {}) => {
   }
 
   const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`;
-  
-  console.log('☁️ Iniciando upload para Cloudinary:', {
-    url: uploadUrl,
-    uploadPreset: options.uploadPreset,
-    folder: options.folder || 'nenhum'
-  });
 
   try {
     const response = await fetch(uploadUrl, {
@@ -108,29 +89,19 @@ export const uploadToCloudinary = async (file, options = {}) => {
     });
 
     const responseText = await response.text();
-    console.log('📡 Resposta do Cloudinary (status):', response.status);
-    console.log('📡 Resposta do Cloudinary (texto):', responseText.substring(0, 200));
 
     if (!response.ok) {
       let errorMessage = `Erro ao fazer upload para o Cloudinary (${response.status})`;
       try {
         const errorData = JSON.parse(responseText);
         errorMessage = errorData.error?.message || errorMessage;
-        console.error('❌ Erro detalhado:', errorData);
-      } catch (e) {
-        console.error('❌ Resposta de erro:', responseText);
+      } catch (_error) {
+        // Mantemos a mensagem padrão quando a resposta não vier em JSON.
       }
       throw new Error(errorMessage);
     }
 
     const data = JSON.parse(responseText);
-    console.log('✅ Upload bem-sucedido!', {
-      url: data.secure_url,
-      publicId: data.public_id,
-      width: data.width,
-      height: data.height
-    });
-
     return {
       url: data.secure_url,
       publicId: data.public_id,
@@ -138,8 +109,6 @@ export const uploadToCloudinary = async (file, options = {}) => {
       height: data.height,
     };
   } catch (error) {
-    console.error('❌ Erro no upload do Cloudinary:', error);
-    console.error('Stack:', error.stack);
     throw error;
   }
 };

@@ -59,14 +59,14 @@ export default function TestCloudinary() {
 
   const checkConfig = () => {
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-    const apiKey = import.meta.env.VITE_CLOUDINARY_API_KEY;
+    const configuredUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
     
     console.log('=== Configuração Cloudinary ===');
     console.log('Cloud Name:', cloudName || '❌ Não configurado');
-    console.log('API Key:', apiKey ? '✅ Configurado' : '❌ Não configurado');
+    console.log('Upload Preset:', configuredUploadPreset ? '✅ Configurado' : '❌ Não configurado');
     console.log('==============================');
     
-    alert(`Cloud Name: ${cloudName || 'Não configurado'}\nAPI Key: ${apiKey ? 'Configurado' : 'Não configurado'}`);
+    alert(`Cloud Name: ${cloudName || 'Não configurado'}\nUpload Preset: ${configuredUploadPreset ? 'Configurado' : 'Não configurado'}`);
   };
 
   return (
@@ -86,8 +86,8 @@ export default function TestCloudinary() {
                 </span>
               </p>
               <p>
-                API Key: <span className={import.meta.env.VITE_CLOUDINARY_API_KEY ? 'text-green-600' : 'text-red-600'}>
-                  {import.meta.env.VITE_CLOUDINARY_API_KEY ? '✅ Configurado' : '❌ Não configurado'}
+                Upload Preset: <span className={import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET ? 'text-green-600' : 'text-red-600'}>
+                  {import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET ? '✅ Configurado' : '❌ Não configurado'}
                 </span>
               </p>
             </div>

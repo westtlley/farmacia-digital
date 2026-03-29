@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { base44 } from '@/api/base44Client';
+import { productRequiresPrescription } from '@/utils/prescriptionPolicy';
 
 /**
  * Compra Expressa (1-Click Purchase)
@@ -31,9 +32,11 @@ export default function ExpressPurchase({ product, onSuccess }) {
       }
 
       // Buscar último pedido do usuário
-      const orders = await base44.entities.Order.filter({ 
-        customer_email: user.email 
-      });
+      const orders = await base44.entities.Order.filter(
+        user.role === 'customer'
+          ? { customer_id: user.id }
+          : { customer_email: user.email }
+      );
 
       if (orders.length === 0) {
         toast.info('Nenhum pedido anterior encontrado');
@@ -60,6 +63,11 @@ export default function ExpressPurchase({ product, onSuccess }) {
   };
 
   const handleExpressPurchase = async () => {
+    if (productRequiresPrescription(product)) {
+      toast.error('Compra expressa nao esta disponivel para itens que exigem receita.');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
@@ -121,7 +129,7 @@ export default function ExpressPurchase({ product, onSuccess }) {
 
     } catch (error) {
       console.error('Erro ao criar pedido:', error);
-      toast.error('Erro ao processar compra');
+      toast.error(error.message || 'Erro ao processar compra');
     } finally {
       setIsProcessing(false);
     }
@@ -131,7 +139,7 @@ export default function ExpressPurchase({ product, onSuccess }) {
     <>
       <Button
         onClick={handleExpressPurchase}
-        disabled={isProcessing}
+        disabled={isProcessing || productRequiresPrescription(product)}
         className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 gap-2"
       >
         {isProcessing ? (
@@ -142,7 +150,7 @@ export default function ExpressPurchase({ product, onSuccess }) {
         ) : (
           <>
             <Zap className="w-4 h-4" />
-            Compra Expressa
+            {productRequiresPrescription(product) ? 'Receita obrigatoria' : 'Compra Expressa'}
           </>
         )}
       </Button>

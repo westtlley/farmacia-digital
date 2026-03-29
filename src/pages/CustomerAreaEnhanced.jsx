@@ -40,14 +40,17 @@ export default function CustomerAreaEnhanced() {
   });
 
   const { data: orders = [], isLoading: ordersLoading } = useQuery({
-    queryKey: ['customerOrders', user?.email],
+    queryKey: ['customerOrders', user?.id, user?.email],
     queryFn: async () => {
-      if (!user?.email) return [];
+      if (!user) return [];
       try {
-        const ordersList = await base44.entities.Order.filter({
-          customer_email: user.email
-        });
-        return ordersList.sort((a, b) => 
+        const filters = user.role === 'customer'
+          ? { customer_id: user.id }
+          : user.email
+            ? { customer_email: user.email }
+            : {};
+        const ordersList = await base44.entities.Order.filter(filters);
+        return ordersList.sort((a, b) =>
           new Date(b.created_date) - new Date(a.created_date)
         );
       } catch (error) {
@@ -55,12 +58,12 @@ export default function CustomerAreaEnhanced() {
         return [];
       }
     },
-    enabled: !!user?.email
+    enabled: !!user
   });
 
   const handleLogout = async () => {
     try {
-      await base44.auth.signOut();
+      await base44.auth.logout();
       toast.success('Logout realizado com sucesso!');
       window.location.href = '/';
     } catch (error) {
@@ -85,8 +88,8 @@ export default function CustomerAreaEnhanced() {
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Acesso Restrito</h2>
           <p className="text-gray-600 mb-6">Faça login para acessar sua área</p>
-          <Button onClick={() => window.location.href = '/login'}>
-            Fazer Login
+          <Button onClick={() => window.location.href = '/'}>
+            Ir para a Home
           </Button>
         </div>
       </div>

@@ -136,16 +136,12 @@ function LayoutContent({ children, currentPageName }) {
 }
 
 export default function Layout({ children, currentPageName }) {
-  // Para páginas admin, não usar ThemeProvider nem Layout
+  // Mantém o tema disponível em toda a aplicação, mas sem chrome público nas telas admin.
   const isAdminPage = currentPageName?.startsWith('Admin');
   
-  if (isAdminPage) {
-    return <>{children}</>;
-  }
-
   return (
     <ThemeProvider>
-      <LayoutContent children={children} currentPageName={currentPageName} />
+      {isAdminPage ? <>{children}</> : <LayoutContent currentPageName={currentPageName}>{children}</LayoutContent>}
     </ThemeProvider>
   );
 }

@@ -29,6 +29,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { applyPhoneMask, formatPhoneNumber, unformatPhone } from '@/utils/phoneFormat';
 import { isValidEmail } from '@/utils/validation';
+import { getStoredSession, setStoredSession } from '@/api/session';
 
 export default function CustomerArea() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -88,7 +89,7 @@ export default function CustomerArea() {
 
   // Atualizar profileData quando user carregar (se não houver dados salvos)
   useEffect(() => {
-    if (user && !localStorage.getItem('userProfile')) {
+    if (user) {
       setProfileData({
         full_name: user.full_name || '',
         email: user.email || '',
@@ -169,15 +170,16 @@ export default function CustomerArea() {
   const { data: orders = [], dataUpdatedAt } = useQuery({
     queryKey: ['userOrders'],
     queryFn: async () => {
-      if (!user?.email) return [];
-      const result = await base44.entities.Order.filter(
-        { customer_email: user.email },
-        '-created_date',
-        10
-      );
+      if (!user) return [];
+      const filters = user.role === 'customer'
+        ? { customer_id: user.id }
+        : user.email
+          ? { customer_email: user.email }
+          : {};
+      const result = await base44.entities.Order.filter(filters, '-created_date', 10);
       return result;
     },
-    enabled: !!user?.email,
+    enabled: !!user,
     refetchInterval: 10000, // Atualizar a cada 10 segundos
     refetchIntervalInBackground: true // Continuar atualizando mesmo quando a aba não está ativa
   });

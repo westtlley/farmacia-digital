@@ -24,9 +24,11 @@ export default function EasyRepurchase({ customerId }) {
       const user = await base44.auth.me();
       if (!user) return;
 
-      const userOrders = await base44.entities.Order.filter({
-        customer_email: user.email
-      });
+      const userOrders = await base44.entities.Order.filter(
+        user.role === 'customer'
+          ? { customer_id: user.id }
+          : { customer_email: user.email }
+      );
 
       // Ordenar por data mais recente
       const sorted = userOrders.sort((a, b) => 

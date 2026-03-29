@@ -151,7 +151,7 @@ export default function AdminDashboard() {
         return base44.entities.PharmacySettings.create({ order_mode: newMode });
       }
     },
-    onSuccess: (data) => {
+    onSuccess: (data, newMode) => {
       queryClient.invalidateQueries(['pharmacySettings']);
       queryClient.setQueryData(['pharmacySettings'], [data]);
       toast.success(`Modo de pedidos alterado para ${newMode === 'app' ? 'App' : 'WhatsApp'}!`);
@@ -921,14 +921,17 @@ export default function AdminDashboard() {
               </div>
 
               {/* Recent Prescriptions */}
-              {prescriptions.filter(p => p.status === 'pending').length > 0 && (
+              {prescriptions.filter(p => p.review_status === 'pending' || p.status === 'uploaded' || p.status === 'pending_review').length > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Receitas Pendentes</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {prescriptions.filter(p => p.status === 'pending').slice(0, 3).map((prescription) => (
+                      {prescriptions
+                        .filter(p => p.review_status === 'pending' || p.status === 'uploaded' || p.status === 'pending_review')
+                        .slice(0, 3)
+                        .map((prescription) => (
                         <div key={prescription.id} className="p-4 border rounded-xl">
                           <div className="flex items-center gap-3 mb-3">
                             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">

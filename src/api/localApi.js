@@ -1,549 +1,399 @@
-// API local que substitui o base44
 import { db } from './localStorage';
-import { apiClient, API_URL } from '@/config/api';
+import { apiClient } from '@/config/api';
+import { clearStoredSession, getStoredSession, setStoredSession } from '@/api/session';
 
-// Simular delay de rede
-const delay = (ms = 100) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms = 100) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Debug Cloudinary - remover em produção se necessário
-if (typeof window !== 'undefined') {
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-  const apiKey = import.meta.env.VITE_CLOUDINARY_API_KEY;
-  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-  
-  console.log('🔍 ===== Cloudinary Config Check =====');
-  console.log('Cloud Name:', cloudName || '❌ FALTA - Adicione VITE_CLOUDINARY_CLOUD_NAME no Vercel');
-  console.log('API Key:', apiKey ? '✅ Configurado' : '❌ FALTA - Adicione VITE_CLOUDINARY_API_KEY no Vercel');
-  console.log('Upload Preset:', uploadPreset || '❌ FALTA - Adicione VITE_CLOUDINARY_UPLOAD_PRESET no Vercel');
-  console.log('Vai usar Cloudinary?', !!cloudName && !!uploadPreset ? '✅ SIM' : '❌ NÃO');
-  console.log('=====================================');
-  
-  // Listar todas as variáveis VITE_ disponíveis
-  const viteEnvVars = Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'));
-  console.log('📋 Variáveis VITE_ disponíveis:', viteEnvVars);
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const content = result.includes(',') ? result.split(',')[1] : result;
+      resolve(content);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
-// Entidades
+const BACKEND_ENTITY_ENDPOINTS = {
+  Product: '/api/products',
+  Category: '/api/categories',
+  Order: '/api/orders',
+  Prescription: '/api/prescriptions',
+  Customer: '/api/customers',
+  PharmacySettings: '/api/settings',
+};
+
+const TRACKABLE_ORDER_FILTERS = ['order_number'];
+
+function isBackendEntity(entityName) {
+  return Boolean(BACKEND_ENTITY_ENDPOINTS[entityName]);
+}
+
+function buildQueryString(filters = {}, sortBy = '', limit = null) {
+  const params = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+
+    params.append(key, value);
+  });
+
+  if (sortBy) {
+    params.append('sortBy', sortBy);
+  }
+
+  if (limit) {
+    params.append('limit', String(limit));
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+function shouldUseTrackOrderEndpoint(filters) {
+  const keys = Object.keys(filters || {}).filter((key) => filters[key] !== undefined && filters[key] !== null && filters[key] !== '');
+  return keys.length === 1 && TRACKABLE_ORDER_FILTERS.includes(keys[0]);
+}
+
+function extractBackendList(entityName, payload) {
+  if (entityName === 'PharmacySettings') {
+    return payload?.settings ? [payload.settings] : [];
+  }
+
+  return Array.isArray(payload) ? payload : [];
+}
+
+function persistSessionIfPresent(payload) {
+  if (payload?.session?.user) {
+    setStoredSession(payload.session);
+  }
+}
+
 class EntityAPI {
   constructor(entityName) {
     this.entityName = entityName;
+    this.endpoint = BACKEND_ENTITY_ENDPOINTS[entityName] || null;
   }
 
   async list(sortBy = '', limit = null) {
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      if (shouldUseBackend) {
-        try {
-          console.log('🔍 Tentando buscar produtos do backend:', API_URL);
-          console.log('VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL || '❌ UNDEFINED');
-          const products = await apiClient.get('/api/products');
-          console.log(`✅ ${products.length} produtos carregados do backend`);
-          return Array.isArray(products) ? products : [];
-        } catch (error) {
-          console.error('❌ Erro ao buscar do backend:', error);
-          console.error('❌ URL tentada:', `${API_URL}/api/products`);
-          console.error('❌ Detalhes:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
-        }
-      } else {
-        console.log('ℹ️ Usando localStorage (backend não configurado ou localhost)');
-        console.log('ℹ️ API_URL atual:', API_URL);
-        console.log('ℹ️ Configure VITE_API_BASE_URL no Vercel!');
-      }
+    if (isBackendEntity(this.entityName)) {
+      const payload = await apiClient.get(`${this.endpoint}${buildQueryString({}, sortBy, limit)}`);
+      return extractBackendList(this.entityName, payload);
     }
+
     await delay();
-    const localData = db.filter(this.entityName, {}, sortBy, limit);
-    console.log(`💾 ${localData.length} produtos carregados do localStorage`);
-    return localData;
+    return db.filter(this.entityName, {}, sortBy, limit);
   }
 
   async filter(filters = {}, sortBy = '', limit = null) {
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      if (shouldUseBackend) {
-        try {
-          const params = new URLSearchParams();
-          if (filters.status) params.append('status', filters.status);
-          if (filters.category) params.append('category', filters.category);
-          if (filters.search) params.append('search', filters.search);
-          
-          const products = await apiClient.get(`/api/products?${params.toString()}`);
-          return Array.isArray(products) ? products : [];
-        } catch (error) {
-          console.error('❌ Erro ao filtrar do backend:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
+    if (this.entityName === 'Order' && shouldUseTrackOrderEndpoint(filters)) {
+      const orderNumber = String(filters.order_number || '').trim();
+      if (!orderNumber) {
+        return [];
+      }
+
+      try {
+        const payload = await apiClient.get(`/api/orders/track/${encodeURIComponent(orderNumber)}`);
+        return payload?.order ? [payload.order] : [];
+      } catch (error) {
+        if (error.status === 404) {
+          return [];
         }
+        throw error;
       }
     }
+
+    if (isBackendEntity(this.entityName)) {
+      const payload = await apiClient.get(`${this.endpoint}${buildQueryString(filters, sortBy, limit)}`);
+      return extractBackendList(this.entityName, payload);
+    }
+
     await delay();
     return db.filter(this.entityName, filters, sortBy, limit);
   }
 
   async get(id) {
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      if (shouldUseBackend) {
-        try {
-          return await apiClient.get(`/api/products/${id}`);
-        } catch (error) {
-          console.error('❌ Erro ao buscar produto do backend:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
-        }
-      }
+    if (this.entityName === 'PharmacySettings') {
+      const [settings] = await this.list('', 1);
+      return settings || null;
     }
+
+    if (isBackendEntity(this.entityName)) {
+      const payload = await apiClient.get(`${this.endpoint}/${id}`);
+      if (this.entityName === 'Prescription') {
+        return payload?.prescription || payload;
+      }
+      return payload;
+    }
+
     await delay();
     return db.getById(this.entityName, id);
   }
 
   async create(data) {
-    // FORÇAR LOG IMEDIATO - não pode ser suprimido
-    console.log('%c🔍 ===== CRIAR PRODUTO =====', 'color: #00ff00; font-weight: bold; font-size: 14px;');
-    console.log('Entity:', this.entityName);
-    console.log('API_URL:', API_URL);
-    console.log('VITE_API_URL:', import.meta.env.VITE_API_URL || '❌ UNDEFINED');
-    console.log('VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL || '❌ UNDEFINED');
-    
-    // Verificar se data é válido
     if (!data) {
-      console.error('❌ create: data é inválido');
-      throw new Error('Dados do produto são obrigatórios');
+      throw new Error('Dados obrigatorios');
     }
-    
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      console.log('isLocalhost?', isLocalhost);
-      console.log('shouldUseBackend?', shouldUseBackend);
-      
-      if (shouldUseBackend) {
-        try {
-          console.log('🔍 Tentando salvar produto no backend:', API_URL);
-          console.log('📦 Dados do produto:', { name: data.name, price: data.price, status: data.status });
-          const product = await apiClient.post('/api/products', data);
-          console.log('✅ Produto salvo no backend:', product.id, '-', product.name);
-          console.log('============================');
-          return product;
-        } catch (error) {
-          console.error('❌ Erro ao salvar no backend:', error);
-          console.error('❌ Detalhes:', error.message);
-          console.error('❌ Stack:', error.stack);
-          console.error('❌ URL tentada:', `${API_URL}/api/products`);
-          console.warn('⚠️ Usando localStorage como fallback');
-          // Continuar para salvar no localStorage como fallback
-        }
-      } else {
-        console.log('ℹ️ Backend não configurado ou localhost');
-        console.log('ℹ️ API_URL atual:', API_URL);
-        console.log('ℹ️ Configure VITE_API_BASE_URL no Vercel!');
-      }
+
+    if (this.entityName === 'Prescription' && data.file) {
+      const { file, ...rest } = data;
+      const payload = await apiClient.post(this.endpoint, {
+        ...rest,
+        file_content_base64: await fileToBase64(file),
+        original_filename: file.name,
+        mime_type: file.type,
+      });
+      persistSessionIfPresent(payload);
+      return payload?.prescription || payload;
     }
+
+    if (this.entityName === 'PharmacySettings') {
+      const payload = await apiClient.post('/api/settings', data);
+      return payload?.settings || payload;
+    }
+
+    if (isBackendEntity(this.entityName)) {
+      const payload = await apiClient.post(this.endpoint, data);
+      persistSessionIfPresent(payload);
+
+      if (this.entityName === 'Order') return payload?.order || payload;
+      if (this.entityName === 'Prescription') return payload?.prescription || payload;
+      if (this.entityName === 'Customer') return payload?.customer || payload;
+      return payload;
+    }
+
     await delay();
-    const result = db.create(this.entityName, data);
-    console.log('⚠️ Produto salvo apenas no localStorage (não persiste entre sessões)');
-    console.log('============================');
-    return result;
+    return db.create(this.entityName, data);
   }
 
   async update(id, data) {
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      if (shouldUseBackend) {
-        try {
-          console.log('🔍 Atualizando produto no backend:', id);
-          const product = await apiClient.put(`/api/products/${id}`, data);
-          console.log('✅ Produto atualizado no backend:', product.id);
-          return product;
-        } catch (error) {
-          console.error('❌ Erro ao atualizar no backend:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
-        }
-      }
+    if (this.entityName === 'PharmacySettings') {
+      const payload = await apiClient.put('/api/settings', data);
+      return payload?.settings || payload;
     }
+
+    if (isBackendEntity(this.entityName)) {
+      const payload = await apiClient.put(`${this.endpoint}/${id}`, data);
+      if (this.entityName === 'Order') return payload?.order || payload;
+      if (this.entityName === 'Prescription') return payload?.prescription || payload;
+      if (this.entityName === 'Customer') return payload?.customer || payload;
+      return payload;
+    }
+
     await delay();
     return db.update(this.entityName, id, data);
   }
 
   async delete(id) {
-    // Tentar usar backend se disponível
-    if (this.entityName === 'Product') {
-      const isLocalhost = API_URL.includes('localhost') || API_URL === 'http://localhost:10000';
-      const shouldUseBackend = API_URL && !isLocalhost && API_URL.startsWith('http');
-      
-      if (shouldUseBackend) {
-        try {
-          console.log('🔍 Deletando produto no backend:', id);
-          await apiClient.delete(`/api/products/${id}`);
-          console.log('✅ Produto deletado no backend:', id);
-          return { success: true };
-        } catch (error) {
-          console.error('❌ Erro ao deletar no backend:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
-        }
-      }
+    if (this.entityName === 'PharmacySettings') {
+      throw new Error('PharmacySettings nao pode ser removido');
     }
+
+    if (isBackendEntity(this.entityName)) {
+      return apiClient.delete(`${this.endpoint}/${id}`);
+    }
+
     await delay();
     return db.delete(this.entityName, id);
   }
 
+  async getFileBlob(id) {
+    if (this.entityName !== 'Prescription') {
+      throw new Error('Arquivo protegido disponivel apenas para receitas');
+    }
+
+    return apiClient.getBlob(`${this.endpoint}/${id}/file`);
+  }
+
   async bulkCreate(items) {
-    // FORÇAR LOG IMEDIATO - não pode ser suprimido
-    console.log('%c🔍 ===== BULK CREATE PRODUTOS =====', 'color: #00ff00; font-weight: bold; font-size: 14px;');
-    console.log('Entity:', this.entityName);
-    console.log('Quantidade:', items.length);
-    
-    // Verificar se items é válido
     if (!items || !Array.isArray(items) || items.length === 0) {
-      console.error('❌ bulkCreate: items inválido ou vazio');
       return [];
     }
-    
-    // Verificar variáveis de ambiente diretamente
-    const viteApiUrl = import.meta.env.VITE_API_URL;
-    const viteApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
-    const finalApiUrl = API_URL;
-    
-    console.log('VITE_API_URL:', viteApiUrl || '❌ UNDEFINED');
-    console.log('VITE_API_BASE_URL:', viteApiBaseUrl || '❌ UNDEFINED');
-    console.log('API_URL FINAL:', finalApiUrl);
-    
-    // Tentar usar backend se disponível
+
     if (this.entityName === 'Product') {
-      const isLocalhost = finalApiUrl.includes('localhost') || finalApiUrl === 'http://localhost:10000';
-      const shouldUseBackend = finalApiUrl && !isLocalhost && finalApiUrl.startsWith('http');
-      
-      console.log('isLocalhost?', isLocalhost);
-      console.log('shouldUseBackend?', shouldUseBackend);
-      
-      if (shouldUseBackend) {
-        console.log('🔍 Tentando salvar produtos no backend:', finalApiUrl);
-        const results = [];
-        let successCount = 0;
-        let errorCount = 0;
-        const errors = [];
-        
-        // Testar conexão primeiro
-        try {
-          const healthCheck = await fetch(`${finalApiUrl}/api/health`);
-          if (!healthCheck.ok) {
-            throw new Error(`Backend não está respondendo: ${healthCheck.status}`);
-          }
-          const health = await healthCheck.json();
-          console.log('✅ Backend online:', health.message);
-        } catch (error) {
-          console.error('❌ Backend offline ou inacessível:', error.message);
-          console.warn('⚠️ Usando localStorage como fallback');
-          // Continuar para fallback
-        }
-        
-        // Se health check passou, tentar salvar produtos
-        if (shouldUseBackend) {
-          for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            try {
-              const response = await fetch(`${finalApiUrl}/api/products`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(item),
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
-              }
-              
-              const product = await response.json();
-              results.push(product);
-              successCount++;
-              
-              // Log de progresso a cada 50 produtos
-              if ((i + 1) % 50 === 0) {
-                console.log(`📊 Progresso: ${i + 1}/${items.length} produtos processados (${successCount} sucesso, ${errorCount} erros)`);
-              }
-            } catch (error) {
-              errorCount++;
-              errors.push({ index: i + 1, name: item.name, error: error.message });
-              
-              // Mostrar apenas os primeiros 5 erros para não poluir o console
-              if (errorCount <= 5) {
-                console.error(`❌ Erro ao criar produto ${i + 1} (${item.name || 'sem nome'}):`, error.message);
-              }
-              // Continuar com os próximos produtos mesmo se um falhar
-            }
-            
-            // Pequeno delay para não sobrecarregar o servidor
-            if ((i + 1) % 10 === 0) {
-              await new Promise(resolve => setTimeout(resolve, 50));
-            }
-          }
-          
-          console.log(`✅ ${successCount} produtos salvos no backend`);
-          if (errorCount > 0) {
-            console.warn(`⚠️ ${errorCount} produtos falharam ao salvar no backend`);
-            if (errors.length > 0) {
-              console.warn('Primeiros erros:', errors.slice(0, 5));
-            }
-          }
-          console.log('============================');
-          
-          // Se pelo menos alguns produtos foram salvos, retornar os resultados
-          if (results.length > 0) {
-            console.log(`✅ Retornando ${results.length} produtos salvos no backend`);
-            return results;
-          } else {
-            console.warn('⚠️ Nenhum produto foi salvo no backend, usando localStorage como fallback');
-          }
-        }
-      } else {
-        console.log('ℹ️ Backend não configurado ou localhost');
-        console.log('ℹ️ API_URL atual:', finalApiUrl);
-        console.log('ℹ️ Verifique se VITE_API_BASE_URL está configurada no Vercel e faça redeploy!');
+      const created = [];
+      for (const item of items) {
+        created.push(await this.create(item));
       }
+      return created;
     }
-    
-    // Fallback para localStorage
-    console.log('💾 Salvando produtos no localStorage...');
-    await delay(300);
-    const result = db.bulkCreate(this.entityName, items);
-    console.log('⚠️ Produtos salvos apenas no localStorage (não persistem entre sessões)');
-    console.log('⚠️ IMPORTANTE: Configure VITE_API_BASE_URL no Vercel e faça redeploy!');
-    console.log('============================');
-    return result;
+
+    await delay();
+    return items.map((item) => db.create(this.entityName, item));
   }
 }
 
-// Autenticação
 class AuthAPI {
   async me() {
-    await delay();
-    let user = JSON.parse(localStorage.getItem('db_currentUser') || '{}');
-    if (!user.id) {
-      // Criar usuário padrão se não existir
-      user = {
-        id: 'user_1',
-        email: 'admin@farmacia.com',
-        full_name: 'Administrador',
-        role: 'admin'
-      };
-      localStorage.setItem('db_currentUser', JSON.stringify(user));
+    try {
+      const payload = await apiClient.get('/api/auth/me');
+      const user = payload?.user || null;
+
+      if (user) {
+        setStoredSession(
+          payload?.session || {
+            ...getStoredSession(),
+            user,
+            auth_mode: 'cookie',
+          }
+        );
+      }
+
+      return user;
+    } catch (error) {
+      if (error.status === 401) {
+        clearStoredSession();
+        return null;
+      }
+
+      throw error;
     }
-    return user;
   }
 
   async login(email, password) {
-    await delay(500);
-    // Para desenvolvimento local, aceita qualquer login
-    const user = {
-      id: 'user_1',
-      email: email || 'admin@farmacia.com',
-      full_name: email?.split('@')[0] || 'Usuário',
-      role: 'admin'
-    };
-    localStorage.setItem('db_currentUser', JSON.stringify(user));
-    return user;
+    const payload = await apiClient.post('/api/auth/login', { email, password });
+    setStoredSession(
+      payload?.session || {
+        user: payload.user,
+        expires_at: payload.expires_at,
+        auth_mode: 'cookie',
+      }
+    );
+    return payload.user;
   }
 
   async logout() {
-    await delay();
-    localStorage.removeItem('db_currentUser');
+    try {
+      await apiClient.post('/api/auth/logout', {});
+    } catch (error) {
+      if (error.status !== 401) {
+        console.error('Erro ao encerrar sessao:', error);
+      }
+    } finally {
+      clearStoredSession();
+    }
+
     return { success: true };
   }
 
+  async signOut() {
+    return this.logout();
+  }
+
   async register(data) {
-    await delay(500);
-    const user = {
-      id: `user_${Date.now()}`,
-      email: data.email,
-      full_name: data.full_name || data.name || 'Usuário',
-      role: 'customer',
-      ...data
-    };
-    localStorage.setItem('db_currentUser', JSON.stringify(user));
-    return user;
+    const payload = await apiClient.post('/api/customers', {
+      ...data,
+      create_session: true,
+    });
+
+    persistSessionIfPresent(payload);
+    return payload?.customer || null;
   }
 }
 
-// Integrações
 class IntegrationsAPI {
   async UploadFile({ file }) {
-    await delay(1000);
-    
-    // Tentar usar Cloudinary se estiver configurado
+    await delay(300);
+
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    
+
     if (file && cloudName && uploadPreset) {
-      console.log('☁️ Tentando upload no Cloudinary...');
-      console.log('📋 Configuração:', { cloudName, uploadPreset, fileName: file.name });
-      try {
-        const { uploadToCloudinary } = await import('@/config/cloudinary');
-        const result = await uploadToCloudinary(file, {
-          folder: 'uploads',
-          uploadPreset: uploadPreset
-        });
-        console.log('✅ Upload Cloudinary bem-sucedido:', result.url);
-        return {
-          file_url: result.url,
-          file_id: result.publicId
-        };
-      } catch (error) {
-        console.error('❌ Erro ao fazer upload no Cloudinary:', error);
-        console.error('❌ Mensagem de erro:', error.message);
-        console.warn('⚠️ Usando fallback...');
-        // Não retorna aqui, deixa cair no fallback abaixo
-      }
-    } else {
-      const missing = [];
-      if (!cloudName) missing.push('VITE_CLOUDINARY_CLOUD_NAME');
-      if (!uploadPreset) missing.push('VITE_CLOUDINARY_UPLOAD_PRESET');
-      
-      console.error('❌ Cloudinary não configurado. Variáveis faltando:', missing);
-      console.error('❌ Adicione essas variáveis no Vercel e faça redeploy!');
-      console.error('❌ Usando placeholder como fallback.');
-      
-      // Em produção, nunca usar blob URLs
+      const { uploadToCloudinary } = await import('@/config/cloudinary');
+      const result = await uploadToCloudinary(file, {
+        folder: 'uploads',
+        uploadPreset,
+      });
+
       return {
-        file_url: 'https://via.placeholder.com/400',
-        file_id: `file_${Date.now()}`,
-        error: 'Cloudinary não configurado'
+        file_url: result.url,
+        file_id: result.publicId,
       };
     }
-    
-    // Se chegou aqui, o Cloudinary falhou mas as variáveis existem
-    // Isso significa que o preset provavelmente não está configurado corretamente
-    console.error('❌ Upload do Cloudinary falhou. Verifique:');
-    console.error('   1. Preset "farmacia-upload" existe no Cloudinary?');
-    console.error('   2. Preset está como "Unsigned" (não "Signed")?');
-    console.error('   3. Nome do preset está correto?');
-    
-    // Em produção, nunca usar blob URLs
+
     return {
       file_url: 'https://via.placeholder.com/400',
       file_id: `file_${Date.now()}`,
-      error: 'Upload do Cloudinary falhou'
+      error: 'Cloudinary nao configurado',
     };
   }
 
   async UploadPrivateFile({ file }) {
-    await delay(1000);
-    
-    // Tentar usar Cloudinary se estiver configurado
+    await delay(300);
+
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-    
+
     if (file && cloudName && uploadPreset) {
-      console.log('☁️ Tentando upload privado no Cloudinary...');
-      console.log('📋 Configuração:', { cloudName, uploadPreset, fileName: file.name });
-      try {
-        const { uploadToCloudinary } = await import('@/config/cloudinary');
-        const result = await uploadToCloudinary(file, {
-          folder: 'private',
-          uploadPreset: uploadPreset
-        });
-        console.log('✅ Upload Cloudinary privado bem-sucedido:', result.url);
-        return {
-          file_url: result.url,
-          file_id: result.publicId
-        };
-      } catch (error) {
-        console.error('❌ Erro ao fazer upload privado no Cloudinary:', error);
-        console.error('❌ Mensagem de erro:', error.message);
-        console.warn('⚠️ Usando fallback...');
-        // Não retorna aqui, deixa cair no fallback abaixo
-      }
-    } else {
-      const missing = [];
-      if (!cloudName) missing.push('VITE_CLOUDINARY_CLOUD_NAME');
-      if (!uploadPreset) missing.push('VITE_CLOUDINARY_UPLOAD_PRESET');
-      
-      console.error('❌ Cloudinary não configurado para upload privado. Variáveis faltando:', missing);
-      console.error('❌ Usando placeholder como fallback.');
-      
-      // Em produção, nunca usar blob URLs
+      const { uploadToCloudinary } = await import('@/config/cloudinary');
+      const result = await uploadToCloudinary(file, {
+        folder: 'private',
+        uploadPreset,
+      });
+
       return {
-        file_url: 'https://via.placeholder.com/400',
-        file_id: `file_${Date.now()}`,
-        error: 'Cloudinary não configurado'
+        file_url: result.url,
+        file_id: result.publicId,
       };
     }
-    
-    // Se chegou aqui, o Cloudinary falhou mas as variáveis existem
-    console.error('❌ Upload privado do Cloudinary falhou. Verifique o preset no Cloudinary.');
-    
-    // Em produção, nunca usar blob URLs
+
     return {
       file_url: 'https://via.placeholder.com/400',
       file_id: `file_${Date.now()}`,
-      error: 'Upload do Cloudinary falhou'
+      error: 'Cloudinary nao configurado',
     };
   }
 
-  async ExtractDataFromUploadedFile({ file_url }) {
-    await delay(2000);
-    // Simular extração de dados de receita
+  async ExtractDataFromUploadedFile() {
+    await delay(150);
+
     return {
-      extracted_data: {
-        patient_name: 'João Silva',
-        doctor_name: 'Dr. Maria Santos',
-        medications: [
-          { name: 'Paracetamol', dosage: '500mg', quantity: 20 },
-          { name: 'Ibuprofeno', dosage: '400mg', quantity: 30 }
-        ],
-        date: new Date().toISOString()
-      }
+      status: 'manual_review_required',
+      output: null,
+      extracted_data: null,
+      message: 'Extracao automatica nao esta habilitada. A revisao da receita e manual pelo admin.',
     };
   }
 
   async CreateFileSignedUrl({ file_id }) {
-    await delay(500);
+    await delay(200);
     return {
       signed_url: `https://example.com/files/${file_id}`,
-      expires_at: new Date(Date.now() + 3600000).toISOString()
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
     };
   }
 
-  async InvokeLLM({ prompt, model = 'gpt-3.5-turbo' }) {
-    await delay(2000);
+  async InvokeLLM({ prompt, model = 'gpt-4o-mini' }) {
+    await delay(200);
     return {
       response: `Resposta simulada para: ${prompt}`,
-      model
+      model,
     };
   }
 
   async SendEmail({ to, subject, body }) {
-    await delay(1000);
+    await delay(200);
     console.log('Email simulado enviado:', { to, subject, body });
     return {
       success: true,
-      message_id: `msg_${Date.now()}`
+      message_id: `msg_${Date.now()}`,
     };
   }
 
   async GenerateImage({ prompt, size = '512x512' }) {
-    await delay(2000);
+    await delay(200);
     return {
       image_url: `https://via.placeholder.com/${size}?text=${encodeURIComponent(prompt)}`,
-      image_id: `img_${Date.now()}`
+      image_id: `img_${Date.now()}`,
     };
   }
 }
 
-// Cliente principal
 class LocalAPIClient {
   constructor() {
     this.entities = {
@@ -556,12 +406,12 @@ class LocalAPIClient {
       Customer: new EntityAPI('Customer'),
       Banner: new EntityAPI('Banner'),
       PharmacySettings: new EntityAPI('PharmacySettings'),
-      ImportLog: new EntityAPI('ImportLog')
+      ImportLog: new EntityAPI('ImportLog'),
     };
 
     this.auth = new AuthAPI();
     this.integrations = {
-      Core: new IntegrationsAPI()
+      Core: new IntegrationsAPI(),
     };
   }
 }

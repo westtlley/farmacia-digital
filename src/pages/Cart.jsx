@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from 'sonner';
 import { useTheme } from '@/components/pharmacy/ThemeProvider';
 import { formatWhatsAppNumber, createWhatsAppUrl } from '@/utils/whatsapp';
@@ -29,6 +30,12 @@ import FreeShippingProgress from '@/components/pharmacy/FreeShippingProgress';
 import SmartSuggestions from '@/components/pharmacy/SmartSuggestions';
 import CouponDisplay from '@/components/pharmacy/CouponDisplay';
 import { validateCoupon, calculateCouponDiscount } from '@/utils/coupons';
+import { applyPhoneMask } from '@/utils/phoneFormat';
+import {
+  getMostRestrictivePolicy,
+  isPrescriptionUsableForProduct,
+  productRequiresPrescription,
+} from '@/utils/prescriptionPolicy';
 
 export default function Cart() {
   const [items, setItems] = useState([]);
@@ -39,18 +46,86 @@ export default function Cart() {
   const [deliveryOption, setDeliveryOption] = useState('motoboy');
   const [freteCalculado, setFreteCalculado] = useState(false);
   const [customerZipCode, setCustomerZipCode] = useState('');
+  const [customerInfo, setCustomerInfo] = useState({
+    name: '',
+    email: '',
+    phone: ''
+  });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState('');
+  const [localPrescriptions, setLocalPrescriptions] = useState([]);
+  const [prescriptionFile, setPrescriptionFile] = useState(null);
+  const [prescriptionNotes, setPrescriptionNotes] = useState('');
+  const [isUploadingPrescription, setIsUploadingPrescription] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('pharmacyCart');
     if (saved) {
       setItems(JSON.parse(saved));
     }
+
+    const savedCustomerInfo = localStorage.getItem('customerCheckoutInfo');
+    if (savedCustomerInfo) {
+      try {
+        setCustomerInfo(JSON.parse(savedCustomerInfo));
+      } catch (error) {
+        console.error('Erro ao carregar dados do cliente:', error);
+      }
+    }
+
+    const loadCurrentUser = async () => {
+      try {
+        const user = await base44.auth.me();
+        if (user) {
+          setCurrentUser(user);
+          setCustomerInfo((prev) => ({
+            name: user.full_name || prev.name,
+            email: user.email || prev.email,
+            phone: user.phone ? applyPhoneMask(user.phone) : prev.phone
+          }));
+        }
+      } catch (error) {
+        console.error('Erro ao carregar sessao do cliente:', error);
+      }
+    };
+
+    loadCurrentUser();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('customerCheckoutInfo', JSON.stringify(customerInfo));
+  }, [customerInfo]);
 
   const updateCart = (newItems) => {
     setItems(newItems);
     localStorage.setItem('pharmacyCart', JSON.stringify(newItems));
     window.dispatchEvent(new Event('cartUpdated'));
+  };
+
+  const syncCartItemsWithBackend = async () => {
+    const syncedItems = [];
+
+    for (const item of items) {
+      try {
+        const products = await base44.entities.Product.filter({ id: item.id });
+        const product = products[0];
+
+        if (!product) {
+          continue;
+        }
+
+        syncedItems.push({
+          ...item,
+          ...product,
+          quantity: item.quantity,
+        });
+      } catch (error) {
+        console.error(`Erro ao sincronizar ${item.name}:`, error);
+        syncedItems.push(item);
+      }
+    }
+
+    updateCart(syncedItems);
   };
 
   const updateQuantity = async (productId, newQuantity) => {
@@ -63,6 +138,17 @@ export default function Cart() {
     try {
       const products = await base44.entities.Product.filter({ id: productId });
       const product = products[0];
+      if (product) {
+        const availableStock = Math.max(
+          0,
+          Number(product.stock_quantity || 0) - Number(product.reserved_quantity || 0)
+        );
+
+        if (product.stock_quantity !== undefined && newQuantity > availableStock) {
+          toast.error(`Apenas ${availableStock} unidade(s) disponivel(eis) em estoque no momento`);
+          return;
+        }
+      }
       
       if (product && product.stock_quantity !== undefined && newQuantity > product.stock_quantity) {
         toast.error(`Apenas ${product.stock_quantity} unidade(s) disponível(eis) em estoque`);
@@ -147,7 +233,30 @@ export default function Cart() {
     }
   });
 
+  const { data: customerPrescriptions = [], refetch: refetchCustomerPrescriptions } = useQuery({
+    queryKey: ['cartPrescriptions', currentUser?.id],
+    queryFn: async () => {
+      if (!currentUser?.id) {
+        return [];
+      }
+
+      return base44.entities.Prescription.filter({ customer_id: currentUser.id }, '-created_date', 20);
+    },
+    enabled: !!currentUser?.id
+  });
+
   const orderMode = settings?.order_mode || 'app';
+  const regulatedItems = items.filter((item) => productRequiresPrescription(item));
+  const cartPolicy = getMostRestrictivePolicy(regulatedItems);
+  const availablePrescriptions = [...localPrescriptions, ...customerPrescriptions].filter(
+    (prescription, index, collection) => collection.findIndex((entry) => entry.id === prescription.id) === index
+  );
+  const selectedPrescription =
+    availablePrescriptions.find((prescription) => prescription.id === selectedPrescriptionId) || null;
+  const selectedPrescriptionValidForCart =
+    regulatedItems.length === 0 ||
+    (selectedPrescription &&
+      regulatedItems.every((item) => isPrescriptionUsableForProduct(selectedPrescription, item)));
 
   // Validar estoque antes de finalizar
   const validateCartItems = async () => {
@@ -158,6 +267,10 @@ export default function Cart() {
         // Buscar produto atualizado para verificar estoque e preço
         const products = await base44.entities.Product.filter({ id: item.id });
         const currentProduct = products[0];
+        const availableStock = Math.max(
+          0,
+          Number(currentProduct?.stock_quantity || 0) - Number(currentProduct?.reserved_quantity || 0)
+        );
         
         if (!currentProduct) {
           errors.push(`${item.name} não foi encontrado`);
@@ -169,6 +282,11 @@ export default function Cart() {
           continue;
         }
         
+        if (currentProduct.stock_quantity !== undefined && availableStock < item.quantity) {
+          errors.push(`${item.name}: apenas ${availableStock} unidade(s) disponivel(eis) agora`);
+          continue;
+        }
+
         if (currentProduct.stock_quantity !== undefined && currentProduct.stock_quantity < item.quantity) {
           errors.push(`${item.name}: apenas ${currentProduct.stock_quantity} unidade(s) disponível(eis)`);
           continue;
@@ -186,12 +304,86 @@ export default function Cart() {
     return errors;
   };
 
+  const handlePrescriptionUpload = async () => {
+    if (!prescriptionFile) {
+      toast.error('Selecione um arquivo de receita antes de enviar.');
+      return;
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf'].includes(prescriptionFile.type)) {
+      toast.error('Formato invalido. Use PDF, JPG, PNG ou WEBP.');
+      return;
+    }
+
+    if (prescriptionFile.size > 10 * 1024 * 1024) {
+      toast.error('Arquivo muito grande. Limite de 10MB.');
+      return;
+    }
+
+    if (!customerInfo.name.trim() || !customerInfo.phone.trim()) {
+      toast.error('Preencha nome e telefone antes de anexar a receita.');
+      return;
+    }
+
+    setIsUploadingPrescription(true);
+
+    try {
+      const prescription = await base44.entities.Prescription.create({
+        file: prescriptionFile,
+        customer_name: customerInfo.name.trim(),
+        customer_email: customerInfo.email.trim(),
+        customer_phone: customerInfo.phone,
+        patient_name: customerInfo.name.trim(),
+        items_declared: regulatedItems.map((item) => item.name),
+        notes: prescriptionNotes.trim(),
+        status: 'uploaded',
+        review_status: 'pending'
+      });
+
+      const refreshedUser = await base44.auth.me();
+      if (refreshedUser) {
+        setCurrentUser(refreshedUser);
+      }
+
+      setLocalPrescriptions((prev) => [prescription, ...prev]);
+      setSelectedPrescriptionId(prescription.id);
+      setPrescriptionFile(null);
+      setPrescriptionNotes('');
+      await refetchCustomerPrescriptions();
+      toast.success('Receita anexada com sucesso! Agora ela pode ser vinculada ao pedido.');
+    } catch (error) {
+      console.error('Erro ao anexar receita no carrinho:', error);
+      toast.error(error.message || 'Nao foi possivel anexar a receita.');
+    } finally {
+      setIsUploadingPrescription(false);
+    }
+  };
+
   const handleFinalizeOrder = async () => {
     if (isCreatingOrder) return;
 
     // Se modo for WhatsApp, apenas abre WhatsApp
     if (orderMode === 'whatsapp') {
       handleWhatsAppCheckout();
+      return;
+    }
+
+    if (!customerInfo.name.trim() || !customerInfo.phone.trim()) {
+      toast.error('Informe pelo menos nome e WhatsApp para finalizar o pedido');
+      return;
+    }
+
+    if (regulatedItems.length > 0 && !selectedPrescriptionId) {
+      toast.error('Este carrinho exige uma receita vinculada antes da finalizacao.');
+      return;
+    }
+
+    if (regulatedItems.length > 0 && !selectedPrescriptionValidForCart) {
+      toast.error(
+        cartPolicy.requiresApprovedPrescription
+          ? 'Os itens regulados deste carrinho exigem uma receita aprovada manualmente.'
+          : 'A receita selecionada nao atende as regras deste carrinho.'
+      );
       return;
     }
 
@@ -214,20 +406,18 @@ export default function Cart() {
       const validationErrors = await validateCartItems();
       
       if (validationErrors.length > 0) {
+        await syncCartItemsWithBackend();
         toast.error(validationErrors[0] + (validationErrors.length > 1 ? ` e mais ${validationErrors.length - 1} erro(s)` : ''));
         setIsCreatingOrder(false);
         return;
       }
 
-      // Obter dados do cliente (se logado)
-      const user = await base44.auth.me();
-      
       // Criar pedido
       const orderData = {
         order_number: `PED${Date.now()}`,
-        customer_name: user?.full_name || 'Cliente',
-        customer_email: user?.email || '',
-        customer_phone: user?.phone || '',
+        customer_name: customerInfo.name.trim(),
+        customer_email: customerInfo.email.trim(),
+        customer_phone: customerInfo.phone,
         items: items.map(item => ({
           product_id: item.id,
           name: item.name,
@@ -244,14 +434,18 @@ export default function Cart() {
         delivery_fee: deliveryFee,
         discount: discount,
         total: total,
+        coupon_code: appliedCoupon?.code || null,
         status: 'pending',
         payment_method: 'A definir',
         delivery_address: deliveryAddress || null,
         delivery_option: deliveryOption,
+        customer_zipcode: customerZipCode,
+        prescription_id: selectedPrescriptionId || null,
         created_date: new Date().toISOString()
       };
 
       const order = await base44.entities.Order.create(orderData);
+      localStorage.setItem('customerCheckoutInfo', JSON.stringify(customerInfo));
       
       // Limpar carrinho
       updateCart([]);
@@ -262,7 +456,8 @@ export default function Cart() {
       window.location.href = createPageUrl('CustomerArea');
     } catch (error) {
       console.error('Erro ao criar pedido:', error);
-      toast.error('Erro ao criar pedido. Tente novamente.');
+      await syncCartItemsWithBackend();
+      toast.error(error.message || 'Erro ao criar pedido. Tente novamente.');
     } finally {
       setIsCreatingOrder(false);
     }
@@ -272,15 +467,42 @@ export default function Cart() {
     setIsCreatingOrder(true);
     
     try {
-      // Obter dados do cliente (se logado)
-      const user = await base44.auth.me();
+      if (!customerInfo.name.trim() || !customerInfo.phone.trim()) {
+        toast.error('Informe pelo menos nome e WhatsApp para continuar');
+        setIsCreatingOrder(false);
+        return;
+      }
+
+      if (regulatedItems.length > 0 && !selectedPrescriptionId) {
+        toast.error('Anexe uma receita valida antes de enviar o pedido no WhatsApp.');
+        setIsCreatingOrder(false);
+        return;
+      }
+
+      if (regulatedItems.length > 0 && !selectedPrescriptionValidForCart) {
+        toast.error(
+          cartPolicy.requiresApprovedPrescription
+            ? 'Os itens regulados deste carrinho exigem uma receita aprovada manualmente.'
+            : 'A receita selecionada nao atende as regras deste carrinho.'
+        );
+        setIsCreatingOrder(false);
+        return;
+      }
       
       // Criar pedido no sistema mesmo no modo WhatsApp (para gestão)
+      const validationErrors = await validateCartItems();
+      if (validationErrors.length > 0) {
+        await syncCartItemsWithBackend();
+        toast.error(validationErrors[0] + (validationErrors.length > 1 ? ` e mais ${validationErrors.length - 1} erro(s)` : ''));
+        setIsCreatingOrder(false);
+        return;
+      }
+
       const orderData = {
         order_number: `PED${Date.now()}`,
-        customer_name: user?.full_name || 'Cliente',
-        customer_email: user?.email || '',
-        customer_phone: user?.phone || '',
+        customer_name: customerInfo.name.trim(),
+        customer_email: customerInfo.email.trim(),
+        customer_phone: customerInfo.phone,
         items: items.map(item => ({
           product_id: item.id,
           name: item.name,
@@ -297,10 +519,13 @@ export default function Cart() {
         delivery_fee: deliveryFee,
         discount: discount,
         total: total,
+        coupon_code: appliedCoupon?.code || null,
         status: 'pending',
         payment_method: 'A definir',
         delivery_address: deliveryAddress || null,
         delivery_option: deliveryOption,
+        customer_zipcode: customerZipCode,
+        prescription_id: selectedPrescriptionId || null,
         created_date: new Date().toISOString(),
         order_mode: 'whatsapp' // Marcar como pedido WhatsApp
       };
@@ -325,7 +550,8 @@ export default function Cart() {
       }
     } catch (error) {
       console.error('Erro ao criar pedido WhatsApp:', error);
-      toast.error('Erro ao criar pedido. Tente novamente.');
+      await syncCartItemsWithBackend();
+      toast.error(error.message || 'Erro ao criar pedido. Tente novamente.');
     } finally {
       setIsCreatingOrder(false);
     }
@@ -428,6 +654,11 @@ export default function Cart() {
                           </Link>
                           {item.dosage && (
                             <p className="text-sm text-gray-500">{item.dosage}</p>
+                          )}
+                          {productRequiresPrescription(item) && (
+                            <p className="text-xs font-medium text-blue-700 mt-2">
+                              Receita obrigatoria no checkout
+                            </p>
                           )}
                         </div>
                         <button
@@ -543,6 +774,127 @@ export default function Cart() {
 
           {/* Summary */}
           <div className="space-y-6">
+            <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4">
+              <h3 className="font-semibold text-gray-900">Seus Dados</h3>
+              <div>
+                <Input
+                  value={customerInfo.name}
+                  onChange={(e) => setCustomerInfo((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="Nome completo"
+                />
+              </div>
+              <div>
+                <Input
+                  value={customerInfo.phone}
+                  onChange={(e) => setCustomerInfo((prev) => ({ ...prev, phone: applyPhoneMask(e.target.value) }))}
+                  placeholder="WhatsApp"
+                  maxLength={15}
+                />
+              </div>
+              <div>
+                <Input
+                  type="email"
+                  value={customerInfo.email}
+                  onChange={(e) => setCustomerInfo((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="Email (opcional)"
+                />
+              </div>
+            </div>
+
+            {regulatedItems.length > 0 && (
+              <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4 border border-blue-100">
+                <div>
+                  <h3 className="font-semibold text-gray-900">Receita vinculada ao pedido</h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {cartPolicy.checkoutMessage}
+                  </p>
+                </div>
+
+                <div className="space-y-2 text-sm text-gray-700">
+                  {regulatedItems.map((item) => (
+                    <div key={`${item.id}-rx`} className="flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2">
+                      <span>{item.name}</span>
+                      <span className="font-medium text-blue-700">
+                        {item.is_controlled ? 'Controlado' : item.is_antibiotic ? 'Antibiotico' : 'Receita'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {availablePrescriptions.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-gray-800">Selecione uma receita ja enviada</p>
+                    <div className="space-y-2">
+                      {availablePrescriptions.map((prescription) => {
+                        const isValid = regulatedItems.every((item) =>
+                          isPrescriptionUsableForProduct(prescription, item)
+                        );
+
+                        return (
+                          <button
+                            key={prescription.id}
+                            type="button"
+                            onClick={() => setSelectedPrescriptionId(prescription.id)}
+                            className={`w-full text-left rounded-xl border px-4 py-3 transition-colors ${
+                              selectedPrescriptionId === prescription.id
+                                ? 'border-emerald-500 bg-emerald-50'
+                                : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium text-gray-900">{prescription.original_filename || prescription.id}</p>
+                                <p className="text-xs text-gray-500">
+                                  Status: {prescription.status} | Review: {prescription.review_status}
+                                </p>
+                              </div>
+                              <span className={`text-xs font-semibold ${isValid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                {isValid ? 'Compativel' : 'Nao atende este carrinho'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-3 border-t pt-4">
+                  <p className="text-sm font-medium text-gray-800">Anexar nova receita</p>
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/jpg,image/webp,application/pdf"
+                    onChange={(event) => setPrescriptionFile(event.target.files?.[0] || null)}
+                  />
+                  <Textarea
+                    value={prescriptionNotes}
+                    onChange={(event) => setPrescriptionNotes(event.target.value)}
+                    placeholder="Observacoes opcionais para a farmacia sobre esta receita"
+                    className="min-h-[100px]"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handlePrescriptionUpload}
+                    disabled={isUploadingPrescription}
+                    className="w-full"
+                  >
+                    {isUploadingPrescription ? 'Enviando receita...' : 'Enviar receita para este pedido'}
+                  </Button>
+                </div>
+
+                {selectedPrescription && (
+                  <div className={`rounded-xl px-4 py-3 text-sm ${
+                    selectedPrescriptionValidForCart ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'
+                  }`}>
+                    {selectedPrescriptionValidForCart
+                      ? `Receita ${selectedPrescription.id} vinculada ao checkout.`
+                      : 'A receita selecionada existe, mas ainda nao atende a politica deste carrinho.'}
+                  </div>
+                )}
+              </div>
+            )}
+
             <DeliveryCalculator
               subtotal={subtotal}
               onCalculate={(result) => {

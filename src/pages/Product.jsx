@@ -32,6 +32,7 @@ import { formatWhatsAppNumber, createWhatsAppUrl } from '@/utils/whatsapp';
 import { formatPrice, formatPriceWithSymbol } from '@/utils/priceFormat';
 import { getProductImage } from '@/utils/productImages';
 import { saveStockNotification } from '@/utils/stockNotifications';
+import { getPolicyForProduct, productRequiresPrescription } from '@/utils/prescriptionPolicy';
 
 import ProductGrid from '@/components/pharmacy/ProductGrid';
 import ExpressPurchase from '@/components/pharmacy/ExpressPurchase';
@@ -109,6 +110,7 @@ export default function Product() {
   const discountPercentage = product?.original_price && product?.price
     ? Math.round(((product.original_price - product.price) / product.original_price) * 100)
     : 0;
+  const productPolicy = getPolicyForProduct(product);
 
   const addToCart = () => {
     if (!product) {
@@ -128,6 +130,10 @@ export default function Product() {
     localStorage.setItem('pharmacyCart', JSON.stringify(cart));
     window.dispatchEvent(new Event('cartUpdated'));
     toast.success(`${quantity}x ${product.name} adicionado ao carrinho!`);
+
+    if (productRequiresPrescription(product)) {
+      toast.info(productPolicy.checkoutMessage);
+    }
   };
 
   const toggleFavorite = () => {
@@ -381,7 +387,7 @@ export default function Product() {
             </div>
 
             {/* Prescription warning */}
-            {(product.requires_prescription || product.is_antibiotic || product.is_controlled) && (
+            {productRequiresPrescription(product) && (
               <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
                 <FileText className="w-6 h-6 text-blue-600 flex-shrink-0" />
                 <div className="flex-1">

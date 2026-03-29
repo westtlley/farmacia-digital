@@ -1,18 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Upload,
-  FileText,
-  Camera,
-  Check,
-  Loader2,
   AlertCircle,
+  Check,
+  FileCheck,
+  FileText,
+  Loader2,
+  MessageCircle,
+  ShieldCheck,
+  Upload,
   X,
-  Plus,
-  Pill,
-  ShoppingCart,
-  ChevronRight
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,427 +19,422 @@ import { Card, CardContent } from "@/components/ui/card";
 import { toast } from 'sonner';
 import { useTheme } from '@/components/pharmacy/ThemeProvider';
 import { formatWhatsAppNumber, createWhatsAppUrl } from '@/utils/whatsapp';
+import { applyPhoneMask } from '@/utils/phoneFormat';
+
+const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf'];
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 export default function UploadPrescription() {
+  const theme = useTheme();
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [extractedData, setExtractedData] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createdPrescription, setCreatedPrescription] = useState(null);
   const [customerInfo, setCustomerInfo] = useState({
     name: '',
     phone: '',
-    notes: ''
+    email: '',
+    patient_name: '',
+    prescriber_name: '',
+    document_number: '',
+    items_declared: '',
+    notes: '',
   });
 
-  const handleFileSelect = async (e) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      try {
+        const user = await base44.auth.me();
+        if (!user) {
+          return;
+        }
 
-    // Validate file type
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
-    if (!validTypes.includes(selectedFile.type)) {
-      toast.error('Formato inválido. Use JPG, PNG ou PDF.');
+        setCustomerInfo((prev) => ({
+          ...prev,
+          name: prev.name || user.full_name || '',
+          patient_name: prev.patient_name || user.full_name || '',
+          email: prev.email || user.email || '',
+          phone: prev.phone || (user.phone ? applyPhoneMask(user.phone) : ''),
+        }));
+      } catch (error) {
+        console.error('Erro ao carregar usuario para receita:', error);
+      }
+    };
+
+    loadCurrentUser();
+  }, []);
+
+  const declaredItems = useMemo(
+    () =>
+      customerInfo.items_declared
+        .split(/\r?\n|,/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    [customerInfo.items_declared]
+  );
+
+  const handleFileSelect = (event) => {
+    const selectedFile = event.target.files?.[0];
+    if (!selectedFile) {
       return;
     }
 
-    // Validate file size (max 10MB)
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      toast.error('Arquivo muito grande. Máximo 10MB.');
+    if (!ACCEPTED_TYPES.includes(selectedFile.type)) {
+      toast.error('Formato invalido. Use PDF, JPG, PNG ou WEBP.');
+      return;
+    }
+
+    if (selectedFile.size > MAX_FILE_SIZE_BYTES) {
+      toast.error('Arquivo muito grande. Limite de 10MB.');
       return;
     }
 
     setFile(selectedFile);
+    setCreatedPrescription(null);
 
-    // Create preview
     if (selectedFile.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (e) => setFilePreview(e.target.result);
+      reader.onload = (loadEvent) => setFilePreview(loadEvent.target?.result || null);
       reader.readAsDataURL(selectedFile);
     } else {
       setFilePreview(null);
     }
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
+  const handleSubmit = async () => {
+    if (!file) {
+      toast.error('Selecione um arquivo de receita antes de continuar.');
+      return;
+    }
 
-    setIsUploading(true);
-    
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    
-    setIsUploading(false);
-    setIsAnalyzing(true);
+    if (!customerInfo.name.trim() || !customerInfo.phone.trim()) {
+      toast.error('Informe nome e telefone para vincular a receita.');
+      return;
+    }
 
-    // Analyze prescription with AI
-    const result = await base44.integrations.Core.ExtractDataFromUploadedFile({
-      file_url,
-      json_schema: {
-        type: 'object',
-        properties: {
-          medications: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string' },
-                dosage: { type: 'string' },
-                quantity: { type: 'string' },
-                instructions: { type: 'string' }
-              }
-            }
-          },
-          doctor_name: { type: 'string' },
-          crm: { type: 'string' },
-          date: { type: 'string' }
-        }
-      }
-    });
+    setIsSubmitting(true);
 
-    setIsAnalyzing(false);
+    try {
+      const prescription = await base44.entities.Prescription.create({
+        file,
+        customer_name: customerInfo.name.trim(),
+        customer_phone: customerInfo.phone,
+        customer_email: customerInfo.email.trim(),
+        patient_name: customerInfo.patient_name.trim() || customerInfo.name.trim(),
+        prescriber_name: customerInfo.prescriber_name.trim(),
+        document_number: customerInfo.document_number.trim(),
+        items_declared: declaredItems,
+        notes: customerInfo.notes.trim(),
+        status: 'uploaded',
+        review_status: 'pending',
+      });
 
-    if (result.status === 'success' && result.output) {
-      setExtractedData(result.output);
-      setStep(2);
-      toast.success('Receita analisada com sucesso!');
-    } else {
-      toast.error('Não foi possível analisar a receita. Tente novamente.');
+      setCreatedPrescription(prescription);
+      setStep(3);
+      toast.success('Receita enviada com sucesso! A revisao agora e manual.');
+    } catch (error) {
+      console.error('Erro ao enviar receita:', error);
+      toast.error(error.message || 'Nao foi possivel enviar a receita.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const theme = useTheme();
-  
   const handleSendToWhatsApp = () => {
-    let message = `Olá! Gostaria de fazer um pedido baseado na minha receita médica.\n\n`;
-    message += `*Dados do Cliente:*\n`;
-    message += `Nome: ${customerInfo.name}\n`;
-    message += `Telefone: ${customerInfo.phone}\n\n`;
-    
-    if (extractedData?.medications?.length > 0) {
-      message += `*Medicamentos da Receita:*\n`;
-      extractedData.medications.forEach((med, i) => {
-        message += `${i + 1}. ${med.name}`;
-        if (med.dosage) message += ` - ${med.dosage}`;
-        if (med.quantity) message += ` (${med.quantity})`;
-        message += `\n`;
-      });
+    if (!createdPrescription) {
+      return;
     }
-    
-    if (customerInfo.notes) {
-      message += `\n*Observações:*\n${customerInfo.notes}`;
-    }
-    
-    message += `\n\nAguardo o orçamento. Obrigado!`;
 
     const whatsappNumber = formatWhatsAppNumber(theme.whatsapp);
-    if (whatsappNumber) {
-      const url = createWhatsAppUrl(whatsappNumber, message);
-      if (url) window.open(url, '_blank');
-    } else {
-      toast.error('WhatsApp não configurado. Configure nas Configurações da farmácia.');
+    if (!whatsappNumber) {
+      toast.error('WhatsApp nao configurado. Ajuste nas configuracoes da farmacia.');
+      return;
+    }
+
+    let message = 'Ola! Acabei de enviar uma receita pelo site.\n\n';
+    message += `Protocolo: ${createdPrescription.id}\n`;
+    message += `Cliente: ${createdPrescription.customer_name}\n`;
+    message += `Telefone: ${createdPrescription.customer_phone}\n`;
+
+    if (createdPrescription.patient_name) {
+      message += `Paciente: ${createdPrescription.patient_name}\n`;
+    }
+
+    if (declaredItems.length > 0) {
+      message += `Itens declarados: ${declaredItems.join(', ')}\n`;
+    }
+
+    message += '\nAguardo a revisao da farmacia.';
+
+    const url = createWhatsAppUrl(whatsappNumber, message);
+    if (url) {
+      window.open(url, '_blank');
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-3xl mx-auto px-4">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <FileText className="w-10 h-10 text-emerald-600" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Enviar Receita Médica</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Enviar Receita Medica</h1>
           <p className="text-gray-500">
-            Envie sua receita e receba um orçamento personalizado em minutos
+            O arquivo fica salvo no servidor e a analise e revisao sao manuais pelo painel administrativo.
           </p>
         </div>
 
-        {/* Progress */}
         <div className="flex items-center justify-center gap-4 mb-8">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className="flex items-center">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                step >= s 
-                  ? 'bg-emerald-600 text-white' 
-                  : 'bg-gray-200 text-gray-400'
-              }`}>
-                {step > s ? <Check className="w-5 h-5" /> : s}
+          {[
+            { id: 1, label: 'Arquivo' },
+            { id: 2, label: 'Dados' },
+            { id: 3, label: 'Confirmacao' },
+          ].map((entry, index) => (
+            <div key={entry.id} className="flex items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
+                  step >= entry.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-400'
+                }`}
+              >
+                {step > entry.id ? <Check className="w-5 h-5" /> : entry.id}
               </div>
-              {s < 3 && (
-                <div className={`w-16 h-1 mx-2 ${
-                  step > s ? 'bg-emerald-600' : 'bg-gray-200'
-                }`} />
+              {index < 2 && (
+                <div className={`w-16 h-1 mx-2 ${step > entry.id ? 'bg-emerald-600' : 'bg-gray-200'}`} />
               )}
             </div>
           ))}
         </div>
 
         <AnimatePresence mode="wait">
-          {/* Step 1: Upload */}
           {step === 1 && (
             <motion.div
-              key="step1"
+              key="upload-step"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
               <Card className="shadow-lg">
-                <CardContent className="p-8">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-6">
-                    1. Envie a foto ou PDF da receita
-                  </h2>
+                <CardContent className="p-8 space-y-6">
+                  <div className="p-4 rounded-2xl border border-blue-200 bg-blue-50 text-blue-900">
+                    <p className="font-semibold mb-1">Politica deste fluxo</p>
+                    <p className="text-sm">
+                      Nao ha OCR nem extracao automatica. O documento e anexado como prova e a farmacia revisa manualmente.
+                    </p>
+                  </div>
 
                   {!file ? (
                     <label className="block">
                       <div className="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-all">
                         <input
                           type="file"
-                          accept="image/jpeg,image/png,image/jpg,application/pdf"
+                          accept="image/jpeg,image/png,image/jpg,image/webp,application/pdf"
                           onChange={handleFileSelect}
                           className="hidden"
                         />
                         <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                           <Upload className="w-8 h-8 text-gray-400" />
                         </div>
-                        <p className="text-gray-600 font-medium mb-2">
-                          Clique para enviar ou arraste o arquivo
-                        </p>
-                        <p className="text-sm text-gray-400">
-                          JPG, PNG ou PDF (máx. 10MB)
-                        </p>
+                        <p className="text-gray-700 font-medium mb-2">Selecione o arquivo da receita</p>
+                        <p className="text-sm text-gray-500">PDF, JPG, PNG ou WEBP com ate 10MB</p>
                       </div>
                     </label>
                   ) : (
                     <div className="space-y-6">
-                      {/* Preview */}
                       <div className="relative bg-gray-100 rounded-2xl p-4">
                         {filePreview ? (
-                          <img
-                            src={filePreview}
-                            alt="Receita"
-                            className="max-h-80 mx-auto rounded-lg"
-                          />
+                          <img src={filePreview} alt="Receita selecionada" className="max-h-80 mx-auto rounded-lg" />
                         ) : (
                           <div className="flex items-center justify-center py-12">
                             <FileText className="w-16 h-16 text-gray-400" />
                             <div className="ml-4">
                               <p className="font-medium text-gray-900">{file.name}</p>
-                              <p className="text-sm text-gray-500">
-                                {(file.size / 1024 / 1024).toFixed(2)} MB
-                              </p>
+                              <p className="text-sm text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                             </div>
                           </div>
                         )}
+
                         <button
                           onClick={() => {
                             setFile(null);
                             setFilePreview(null);
                           }}
-                          className="absolute top-2 right-2 w-8 h-8 bg-white rounded-full shadow flex items-center justify-center hover:bg-gray-100"
+                          className="absolute top-4 right-4 w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-lg hover:bg-red-50 transition-colors"
                         >
-                          <X className="w-4 h-4" />
+                          <X className="w-5 h-5 text-gray-500" />
                         </button>
                       </div>
 
-                      <Button
-                        onClick={handleUpload}
-                        disabled={isUploading || isAnalyzing}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 h-14 text-lg"
-                      >
-                        {isUploading ? (
-                          <>
-                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                            Enviando...
-                          </>
-                        ) : isAnalyzing ? (
-                          <>
-                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                            Analisando receita...
-                          </>
-                        ) : (
-                          <>
-                            Analisar Receita
-                            <ChevronRight className="w-5 h-5 ml-2" />
-                          </>
-                        )}
-                      </Button>
+                      <div className="flex justify-end">
+                        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setStep(2)}>
+                          Continuar
+                        </Button>
+                      </div>
                     </div>
                   )}
-
-                  <div className="mt-8 grid grid-cols-3 gap-4 text-center text-sm">
-                    <div className="p-4 bg-gray-50 rounded-xl">
-                      <Camera className="w-6 h-6 text-emerald-600 mx-auto mb-2" />
-                      <p className="text-gray-600">Tire uma foto clara</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-xl">
-                      <FileText className="w-6 h-6 text-emerald-600 mx-auto mb-2" />
-                      <p className="text-gray-600">Ou envie um PDF</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-xl">
-                      <Check className="w-6 h-6 text-emerald-600 mx-auto mb-2" />
-                      <p className="text-gray-600">Receba orçamento</p>
-                    </div>
-                  </div>
                 </CardContent>
               </Card>
             </motion.div>
           )}
 
-          {/* Step 2: Review */}
           {step === 2 && (
             <motion.div
-              key="step2"
+              key="details-step"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
               <Card className="shadow-lg">
-                <CardContent className="p-8">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-6">
-                    2. Confira os medicamentos identificados
-                  </h2>
-
-                  {extractedData?.medications?.length > 0 ? (
-                    <div className="space-y-4 mb-8">
-                      {extractedData.medications.map((med, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center gap-4 p-4 bg-emerald-50 rounded-xl"
-                        >
-                          <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
-                            <Pill className="w-6 h-6 text-emerald-600" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-medium text-gray-900">{med.name}</p>
-                            <p className="text-sm text-gray-500">
-                              {med.dosage && `Dosagem: ${med.dosage}`}
-                              {med.quantity && ` • Qtd: ${med.quantity}`}
-                            </p>
-                            {med.instructions && (
-                              <p className="text-xs text-gray-400 mt-1">{med.instructions}</p>
-                            )}
-                          </div>
-                          <Check className="w-5 h-5 text-emerald-600" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 mb-8 bg-amber-50 rounded-xl">
-                      <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-3" />
-                      <p className="text-amber-800 font-medium">
-                        Não conseguimos identificar os medicamentos automaticamente
-                      </p>
-                      <p className="text-amber-600 text-sm mt-1">
-                        Não se preocupe! Nosso farmacêutico irá analisar sua receita manualmente.
-                      </p>
-                    </div>
-                  )}
-
-                  {extractedData?.doctor_name && (
-                    <div className="bg-gray-50 rounded-xl p-4 mb-6">
-                      <p className="text-sm text-gray-500">Médico</p>
-                      <p className="font-medium text-gray-900">{extractedData.doctor_name}</p>
-                      {extractedData.crm && (
-                        <p className="text-sm text-gray-500">CRM: {extractedData.crm}</p>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="flex gap-4">
-                    <Button
-                      variant="outline"
-                      onClick={() => setStep(1)}
-                      className="flex-1"
-                    >
-                      Enviar outra receita
-                    </Button>
-                    <Button
-                      onClick={() => setStep(3)}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-                    >
-                      Continuar
-                      <ChevronRight className="w-5 h-5 ml-2" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
-          {/* Step 3: Contact Info */}
-          {step === 3 && (
-            <motion.div
-              key="step3"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <Card className="shadow-lg">
-                <CardContent className="p-8">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-6">
-                    3. Seus dados para contato
-                  </h2>
-
-                  <div className="space-y-4 mb-8">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Nome completo
-                      </label>
-                      <Input
-                        value={customerInfo.name}
-                        onChange={(e) => setCustomerInfo(prev => ({ ...prev, name: e.target.value }))}
-                        placeholder="Seu nome"
-                        className="h-12"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        WhatsApp
-                      </label>
-                      <Input
-                        value={customerInfo.phone}
-                        onChange={(e) => {
-                          const formatted = applyPhoneMask(e.target.value);
-                          setCustomerInfo(prev => ({ ...prev, phone: formatted }));
-                        }}
-                        placeholder="(00) 00000-0000"
-                        className="h-12"
-                        maxLength={15}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Observações (opcional)
-                      </label>
-                      <Textarea
-                        value={customerInfo.notes}
-                        onChange={(e) => setCustomerInfo(prev => ({ ...prev, notes: e.target.value }))}
-                        placeholder="Alguma informação adicional..."
-                        rows={3}
-                      />
+                <CardContent className="p-8 space-y-6">
+                  <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-900">
+                      <p className="font-semibold">Revisao manual</p>
+                      <p>A farmacia vai revisar o documento no admin antes de liberar itens que exigem aprovacao.</p>
                     </div>
                   </div>
 
-                  <div className="flex gap-4">
-                    <Button
-                      variant="outline"
-                      onClick={() => setStep(2)}
-                      className="flex-1"
-                    >
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <Input
+                      value={customerInfo.name}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, name: event.target.value }))}
+                      placeholder="Nome do cliente"
+                    />
+                    <Input
+                      value={customerInfo.phone}
+                      onChange={(event) =>
+                        setCustomerInfo((prev) => ({ ...prev, phone: applyPhoneMask(event.target.value) }))
+                      }
+                      placeholder="Telefone / WhatsApp"
+                      maxLength={15}
+                    />
+                    <Input
+                      type="email"
+                      value={customerInfo.email}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, email: event.target.value }))}
+                      placeholder="Email (opcional)"
+                    />
+                    <Input
+                      value={customerInfo.patient_name}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, patient_name: event.target.value }))}
+                      placeholder="Nome do paciente (opcional)"
+                    />
+                    <Input
+                      value={customerInfo.prescriber_name}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, prescriber_name: event.target.value }))}
+                      placeholder="Nome do prescritor (opcional)"
+                    />
+                    <Input
+                      value={customerInfo.document_number}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, document_number: event.target.value }))}
+                      placeholder="Numero do documento (opcional)"
+                    />
+                  </div>
+
+                  <div className="space-y-4">
+                    <Textarea
+                      value={customerInfo.items_declared}
+                      onChange={(event) =>
+                        setCustomerInfo((prev) => ({ ...prev, items_declared: event.target.value }))
+                      }
+                      placeholder="Itens declarados na receita (um por linha ou separados por virgula)"
+                      className="min-h-[110px]"
+                    />
+                    <Textarea
+                      value={customerInfo.notes}
+                      onChange={(event) => setCustomerInfo((prev) => ({ ...prev, notes: event.target.value }))}
+                      placeholder="Observacoes adicionais para a farmacia"
+                      className="min-h-[110px]"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row justify-between gap-3">
+                    <Button variant="outline" onClick={() => setStep(1)}>
                       Voltar
                     </Button>
                     <Button
-                      onClick={handleSendToWhatsApp}
-                      disabled={!customerInfo.name || !customerInfo.phone}
-                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={handleSubmit}
+                      disabled={isSubmitting}
                     >
-                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-                      </svg>
-                      Solicitar Orçamento
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Enviando receita...
+                        </>
+                      ) : (
+                        'Enviar para revisao'
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {step === 3 && createdPrescription && (
+            <motion.div
+              key="success-step"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <Card className="shadow-lg">
+                <CardContent className="p-8 space-y-6">
+                  <div className="text-center">
+                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <FileCheck className="w-10 h-10 text-emerald-600" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Receita registrada</h2>
+                    <p className="text-gray-600">
+                      Protocolo <strong>{createdPrescription.id}</strong>. O documento ja esta no backend e no painel admin.
+                    </p>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-2xl border bg-gray-50">
+                      <p className="text-sm text-gray-500 mb-1">Status</p>
+                      <p className="font-semibold text-gray-900">{createdPrescription.status}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl border bg-gray-50">
+                      <p className="text-sm text-gray-500 mb-1">Review status</p>
+                      <p className="font-semibold text-gray-900">{createdPrescription.review_status}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-900">
+                    <div className="flex items-start gap-3">
+                      <ShieldCheck className="w-5 h-5 mt-0.5" />
+                      <div className="text-sm">
+                        <p className="font-semibold">O que vale agora</p>
+                        <p>Itens simples com receita anexada podem seguir para checkout. Antibioticos e controlados dependem de aprovacao manual.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button className="bg-green-600 hover:bg-green-700" onClick={handleSendToWhatsApp}>
+                      <MessageCircle className="w-4 h-4 mr-2" />
+                      Avisar via WhatsApp
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setStep(1);
+                        setFile(null);
+                        setFilePreview(null);
+                        setCreatedPrescription(null);
+                        setCustomerInfo((prev) => ({
+                          ...prev,
+                          items_declared: '',
+                          notes: '',
+                          prescriber_name: '',
+                          document_number: '',
+                        }));
+                      }}
+                    >
+                      Enviar outra receita
                     </Button>
                   </div>
                 </CardContent>
@@ -449,20 +442,6 @@ export default function UploadPrescription() {
             </motion.div>
           )}
         </AnimatePresence>
-
-        {/* Info box */}
-        <div className="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-6">
-          <div className="flex gap-4">
-            <AlertCircle className="w-6 h-6 text-blue-500 flex-shrink-0" />
-            <div>
-              <h3 className="font-medium text-blue-900 mb-1">Importante</h3>
-              <p className="text-sm text-blue-700">
-                Medicamentos controlados (tarja preta) exigem a apresentação da receita original 
-                no momento da entrega. O receituário será conferido e retido conforme legislação vigente.
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

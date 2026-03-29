@@ -54,7 +54,9 @@ import UploadPrescription from "./UploadPrescription";
 import AdminStoreEditor from "./AdminStoreEditor";
 
 import AdminVisualEditor from "./AdminVisualEditor";
+import AdminLogin from "./AdminLogin";
 
+import AdminRoute from '@/components/auth/AdminRoute';
 
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -112,6 +114,8 @@ const PAGES = {
     AdminStoreEditor: AdminStoreEditor,
     
     AdminVisualEditor: AdminVisualEditor,
+
+    AdminLogin: AdminLogin,
     
 }
 
@@ -138,36 +142,42 @@ function _getCurrentPage(url) {
 function PagesContent() {
     const location = useLocation();
     const currentPage = _getCurrentPage(location.pathname);
-    const isAdminPage = currentPage?.startsWith('Admin');
+    const withAdminGuard = (element) => (
+        <AdminRoute>
+            {element}
+        </AdminRoute>
+    );
     
     return (
         <AdminSidebarProvider>
             <Layout currentPageName={currentPage}>
                 <Routes>            
                 <Route path="/" element={<Home />} />
-                <Route path="/AdminCustomers" element={<AdminCustomers />} />
+                <Route path="/adminlogin" element={<AdminLogin />} />
+                <Route path="/AdminLogin" element={<AdminLogin />} />
+                <Route path="/AdminCustomers" element={withAdminGuard(<AdminCustomers />)} />
                 
-                <Route path="/AdminDashboard" element={<AdminDashboard />} />
+                <Route path="/AdminDashboard" element={withAdminGuard(<AdminDashboard />)} />
                 
-                <Route path="/AdminFinancial" element={<AdminFinancial />} />
+                <Route path="/AdminFinancial" element={withAdminGuard(<AdminFinancial />)} />
                 
-                <Route path="/AdminImportHistory" element={<AdminImportHistory />} />
+                <Route path="/AdminImportHistory" element={withAdminGuard(<AdminImportHistory />)} />
                 
-                <Route path="/AdminImportProducts" element={<AdminImportProducts />} />
+                <Route path="/AdminImportProducts" element={withAdminGuard(<AdminImportProducts />)} />
                 
-                <Route path="/AdminOrders" element={<AdminOrders />} />
+                <Route path="/AdminOrders" element={withAdminGuard(<AdminOrders />)} />
                 
-                <Route path="/AdminPrescriptions" element={<AdminPrescriptions />} />
+                <Route path="/AdminPrescriptions" element={withAdminGuard(<AdminPrescriptions />)} />
                 
-                <Route path="/AdminMedications" element={<AdminMedications />} />
+                <Route path="/AdminMedications" element={withAdminGuard(<AdminMedications />)} />
                 
-                <Route path="/AdminProducts" element={<AdminProducts />} />
+                <Route path="/AdminProducts" element={withAdminGuard(<AdminProducts />)} />
                 
-                <Route path="/AdminPromotions" element={<AdminPromotions />} />
+                <Route path="/AdminPromotions" element={withAdminGuard(<AdminPromotions />)} />
                 
-                <Route path="/AdminReports" element={<AdminReports />} />
+                <Route path="/AdminReports" element={withAdminGuard(<AdminReports />)} />
                 
-                <Route path="/AdminSettings" element={<AdminSettings />} />
+                <Route path="/AdminSettings" element={withAdminGuard(<AdminSettings />)} />
                 
                 <Route path="/Blog" element={<Blog />} />
                 
@@ -176,7 +186,7 @@ function PagesContent() {
                 <Route path="/Category" element={<Category />} />
                 
                 <Route path="/CustomerArea" element={<CustomerAreaEnhanced />} />
-                <Route path="/CustomerAreaOld" element={<CustomerArea />} />
+                <Route path="/CustomerAreaOld" element={<CustomerAreaEnhanced />} />
                 
                 <Route path="/DeliveryAreas" element={<DeliveryAreas />} />
                 
@@ -194,9 +204,9 @@ function PagesContent() {
                 
                 <Route path="/UploadPrescription" element={<UploadPrescription />} />
                 
-                <Route path="/AdminStoreEditor" element={<AdminStoreEditor />} />
+                <Route path="/AdminStoreEditor" element={withAdminGuard(<AdminStoreEditor />)} />
                 
-                <Route path="/AdminVisualEditor" element={<AdminVisualEditor />} />
+                <Route path="/AdminVisualEditor" element={withAdminGuard(<AdminVisualEditor />)} />
                 
                 </Routes>
             </Layout>
