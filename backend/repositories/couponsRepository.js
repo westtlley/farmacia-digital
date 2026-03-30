@@ -57,9 +57,10 @@ function normalizeCoupon(source = {}, current = null) {
     created_date: current?.created_date || payload.created_date || now,
     updated_date: now,
   };
+  const couponPayload = { ...coupon };
+  delete couponPayload.id;
 
   return {
-    id: coupon.id,
     code: coupon.code,
     type: coupon.type,
     value: coupon.value,
@@ -74,7 +75,7 @@ function normalizeCoupon(source = {}, current = null) {
     ends_at: coupon.endsAt,
     usage_limit: coupon.usageLimit,
     usage_count: coupon.usageCount,
-    payload: coupon,
+    payload: couponPayload,
     created_at: coupon.created_date,
     updated_at: coupon.updated_date,
   };
@@ -96,14 +97,14 @@ export async function upsertCoupon(source, executor = null) {
   const result = await query(
     `
       INSERT INTO coupons (
-        id, code, type, value, description, min_purchase, max_discount, valid_for,
+        code, type, value, description, min_purchase, max_discount, valid_for,
         zip_codes, neighborhood, active, starts_at, ends_at, usage_limit,
         usage_count, payload, created_at, updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8,
-        $9::jsonb, $10, $11, $12::timestamptz, $13::timestamptz, $14,
-        $15, $16::jsonb, $17::timestamptz, $18::timestamptz
+        $1, $2, $3, $4, $5, $6, $7,
+        $8::jsonb, $9, $10, $11::timestamptz, $12::timestamptz, $13,
+        $14, $15::jsonb, $16::timestamptz, $17::timestamptz
       )
       ON CONFLICT (code) DO UPDATE SET
         type = EXCLUDED.type,
@@ -123,7 +124,6 @@ export async function upsertCoupon(source, executor = null) {
       RETURNING *
     `,
     [
-      record.id,
       record.code,
       record.type,
       record.value,
